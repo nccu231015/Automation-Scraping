@@ -16,10 +16,16 @@ load_dotenv(dotenv_path=env_path)
 
 app = FastAPI(title="新聞發布系統 API")
 
-# CORS 設定
+# CORS 設定 - 支持本地開發和 Vercel 部署
+origins = [
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "https://*.vercel.app",  # 允許所有 Vercel 部署的前端
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173"],  # 允許的前端來源
+    allow_origins=["*"],  # 在生產環境中應該限制具體域名
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
