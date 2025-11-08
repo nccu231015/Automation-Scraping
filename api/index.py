@@ -1,35 +1,32 @@
 """
 Vercel Serverless Function entry point
-將 FastAPI 應用適配為 Vercel Serverless Functions
 """
-import os
 import sys
+import os
 
-# 打印調試信息
-print("🔍 Current working directory:", os.getcwd())
-print("🔍 __file__:", __file__)
-print("🔍 sys.path:", sys.path[:3])
+# 添加專案根目錄到 Python 路徑
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# 確保 Python 能找到 backend 模組
-root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if root_dir not in sys.path:
-    sys.path.insert(0, root_dir)
-    print(f"✅ Added to sys.path: {root_dir}")
-
+# 嘗試導入
 try:
     from backend.main import app
-    print("✅ Successfully imported app from backend.main")
-    
     from mangum import Mangum
-    print("✅ Successfully imported Mangum")
-    
-    # 使用 Mangum 將 FastAPI 轉換為 ASGI handler
     handler = Mangum(app, lifespan="off")
-    print("✅ Mangum handler created successfully")
-    
 except Exception as e:
-    print(f"❌ Error during import: {e}")
-    import traceback
-    traceback.print_exc()
-    raise
+    # 如果導入失敗，創建一個簡單的 fallback handler
+    print(f"Warning: Failed to import main app: {e}")
+    from fastapi import FastAPI
+    from mangum import Mangum
+    
+    fallback_app = FastAPI()
+    
+    @fallback_app.get("/")
+    def root():
+        return {
+            "error": "Backend initialization failed",
+            "message": str(e),
+            "hint": "Check Vercel Function Logs for details"
+        }
+    
+    handler = Mangum(fallback_app, lifespan="off")
 
