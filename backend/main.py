@@ -10,12 +10,9 @@ from dotenv import load_dotenv
 from supabase import create_client, Client
 from openai import OpenAI
 
-# 載入環境變數（僅在本地開發時）
-# Vercel 會自動注入環境變數，不需要 .env 文件
-if os.getenv("VERCEL") != "1":
-    env_path = Path(__file__).parent.parent / '.env'
-    if env_path.exists():
-        load_dotenv(dotenv_path=env_path)
+# 載入環境變數
+env_path = Path(__file__).parent.parent / '.env'
+load_dotenv(dotenv_path=env_path)
 
 app = FastAPI(title="新聞發布系統 API")
 
@@ -37,35 +34,24 @@ app.add_middleware(
 # Supabase 客戶端初始化
 supabase_url = os.getenv("SUPABASE_URL")
 supabase_key = os.getenv("SUPABASE_KEY")
-# 表名可從環境變數讀取，預設為 'news'
-table_name = os.getenv("SUPABASE_TABLE_NAME") or os.getenv("SUPABASE_TABLE", "news")
+table_name = os.getenv("SUPABASE_TABLE_NAME", "news_data")
 
-# 延遲初始化 - 在請求時才檢查，避免啟動時就崩潰
-supabase: Optional[Client] = None
-if supabase_url and supabase_key:
-    try:
-        supabase = create_client(supabase_url, supabase_key)
-        print(f"✅ Supabase 客戶端已初始化")
-        print(f"📍 連接至: {supabase_url}")
-        print(f"📊 使用資料表: {table_name}")
-    except Exception as e:
-        print(f"⚠️ Supabase 初始化失敗: {e}")
-else:
-    print(f"⚠️ 警告: 未設定 SUPABASE_URL 或 SUPABASE_KEY")
-    print(f"SUPABASE_URL 存在: {supabase_url is not None}")
-    print(f"SUPABASE_KEY 存在: {supabase_key is not None}")
+if not supabase_url or not supabase_key:
+    raise ValueError("請在 .env 檔案中設定 SUPABASE_URL 和 SUPABASE_KEY")
+
+supabase: Client = create_client(supabase_url, supabase_key)
+print(f"✅ Supabase 客戶端已初始化")
+print(f"📍 連接至: {supabase_url}")
+print(f"📊 使用資料表: {table_name}")
 
 # OpenAI 客戶端初始化
 openai_api_key = os.getenv("OPENAI_API_KEY")
-openai_client: Optional[OpenAI] = None
-if openai_api_key:
-    try:
-        openai_client = OpenAI(api_key=openai_api_key)
-        print(f"✅ OpenAI 客戶端已初始化")
-    except Exception as e:
-        print(f"⚠️ OpenAI 初始化失敗: {e}")
-else:
+if not openai_api_key:
     print("⚠️ 警告: 未設定 OPENAI_API_KEY，AI 重寫功能將無法使用")
+    openai_client = None
+else:
+    openai_client = OpenAI(api_key=openai_api_key)
+    print(f"✅ OpenAI 客戶端已初始化")
 
 # 暫存 system prompts (在實際應用中應該存在資料庫)
 system_prompts_storage = []
@@ -127,13 +113,6 @@ async def root():
 @app.get("/api/health")
 async def health_check():
     """檢查 Supabase 連接狀態"""
-    if not supabase:
-        return {
-            "status": "unhealthy",
-            "supabase_connected": False,
-            "error": "Supabase 未初始化，請檢查環境變數 SUPABASE_URL 和 SUPABASE_KEY"
-        }
-    
     try:
         # 嘗試查詢一筆資料來測試連接
         response = supabase.table(table_name).select("id").limit(1).execute()

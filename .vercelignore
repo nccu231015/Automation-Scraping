@@ -1,9 +1,0 @@
-# 部署時忽略的文件
-frontend/
-.env
-.git/
-__pycache__/
-*.pyc
-.DS_Store
-node_modules/
-
