@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
 import axios from 'axios'
 
-// 設定 axios 基礎 URL
-axios.defaults.baseURL = 'http://localhost:8000'
+// 使用相對路徑，讓 Vite proxy 自動轉發 /api 請求到後端
+// 這樣透過 ngrok 公開前端時，API 請求會正確轉發到本地後端
+axios.defaults.baseURL = ''
 
 interface NewsItem {
   id: number
@@ -198,6 +199,7 @@ function App() {
     )
   )
   const normalizedKeyword = aiTitleKeyword.trim().toLowerCase()
+  const processedKeyword = processedTitleKeyword.trim().toLowerCase()
   const filteredNews = newsList.filter((news) => {
     const matchWebsite =
       aiWebsiteFilter === 'all' ||
@@ -812,11 +814,15 @@ function App() {
                 <>
                   {(() => {
                     const filteredProcessed = processedNewsList.filter((news) => {
-                      const websiteMatch = processedWebsiteFilter === 'all' || news.sourceWebsite === processedWebsiteFilter
-                      const titleMatch = !processedTitleKeyword || 
-                        news.title_modified?.toLowerCase().includes(processedTitleKeyword.toLowerCase()) ||
-                        news.title_translated?.toLowerCase().includes(processedTitleKeyword.toLowerCase())
-                      return websiteMatch && titleMatch
+                      const websiteMatch =
+                        processedWebsiteFilter === 'all' || news.sourceWebsite === processedWebsiteFilter
+                      const lowerTitle = news.title_modified?.toLowerCase() || ''
+                      const lowerContent = news.content_modified?.toLowerCase() || ''
+                      const keywordMatch =
+                        processedKeyword === '' ||
+                        lowerTitle.includes(processedKeyword) ||
+                        lowerContent.includes(processedKeyword)
+                      return websiteMatch && keywordMatch
                     })
 
                     if (filteredProcessed.length === 0) {
@@ -834,15 +840,8 @@ function App() {
                             >
                               ← 返回列表
                             </button>
-                            <div style={{ marginBottom: '30px', paddingBottom: '30px', borderBottom: '2px solid #667eea' }}>
-                              <h3 style={{ color: '#667eea', marginBottom: '10px' }}>原始新聞</h3>
-                              <h4>{selectedProcessedNews.title_translated || '無標題'}</h4>
-                              <div className="content">
-                                {selectedProcessedNews.content_translated || '無內容'}
-                              </div>
-                            </div>
                             <div>
-                              <h3 style={{ color: '#764ba2', marginBottom: '10px' }}>AI 重寫後</h3>
+                              <h3 style={{ color: '#764ba2', marginBottom: '10px' }}>AI 重寫結果</h3>
                               <h4>{selectedProcessedNews.title_modified || '無標題'}</h4>
                               <div className="content">
                                 {selectedProcessedNews.content_modified || '無內容'}
