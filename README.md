@@ -1,65 +1,116 @@
-# Automation Scraping - 新聞發佈系統
+# Automation Scraping - AI News Rewriting System
 
-一個全端新聞管理和 AI 重寫系統。
+A full-stack news management and AI rewriting system that allows you to process news articles with customizable AI prompts.
 
-## 🚀 功能特色
+## 🚀 Features
 
-- **原始新聞列表**：顯示從 Supabase 抓取的新聞
-- **AI 寫新聞**：使用 OpenAI GPT-4o 重寫新聞標題和內容
-- **System Prompt 管理**：自定義 AI 重寫的提示詞
-- **處理後新聞列表**：查看 AI 重寫後的新聞
-- **篩選功能**：按網站來源和標題關鍵字過濾
+- **Original News List**: Display news fetched from Supabase with filtering by source and keywords
+- **AI News Rewriting**: Rewrite news titles and content using OpenAI GPT models
+- **System Prompt Management**: Create and manage custom AI prompts stored in browser localStorage
+- **Processed News List**: View AI-rewritten news (displays only AI results, not original content)
+- **Multi-selection**: Select multiple news articles and system prompts for batch processing
+- **Preview Modal**: Preview news content before processing
+- **Filtering**: Filter by website source and title keywords across all tabs
 
-## 📦 技術棧
+## 📦 Tech Stack
 
-### 前端
+### Frontend
 - React + TypeScript
 - Vite
 - Axios
 - Tailwind CSS
 
-### 後端
-- Python FastAPI
-- Supabase
+### Backend
+- Python 3.12
+- FastAPI
+- Supabase (PostgreSQL)
 - OpenAI API
 
-## 🛠️ 本地開發
+## 🛠️ Local Development
 
-### 前端
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-### 後端
-```bash
-pip install -r requirements.txt
-python backend/main.py
-```
-
-### 環境變數
-在根目錄創建 `.env` 文件：
+### 1. Setup Environment Variables
+Create a `.env` file in the project root:
 ```env
 SUPABASE_URL=your_supabase_url
 SUPABASE_KEY=your_supabase_key
-SUPABASE_TABLE_NAME=your_table_name
+SUPABASE_TABLE=your_table_name
 OPENAI_API_KEY=your_openai_api_key
+ALLOWED_SOURCE_WEBSITES=https://example.com/,https://another-site.com/
 ```
 
-## 🌐 部署
+### 2. Install Dependencies
 
-### Vercel（前端）
-1. 連接 GitHub 倉庫
-2. 設定 Root Directory 為 `frontend`
-3. Build Command: `npm run build`
-4. Output Directory: `dist`
+**Backend:**
+```bash
+pip install -r requirements.txt
+```
 
-### Railway/Render（後端）
-1. 部署 Python FastAPI 應用
-2. 設定環境變數
-3. 啟動命令：`uvicorn backend.main:app --host 0.0.0.0 --port $PORT`
+**Frontend:**
+```bash
+cd frontend
+npm install
+```
 
-## 📝 授權
+### 3. Start Services
+
+**Terminal 1 - Backend:**
+```bash
+python3.12 backend/main.py
+# Runs on http://localhost:8000
+```
+
+**Terminal 2 - Frontend:**
+```bash
+cd frontend
+npm run dev
+# Runs on http://localhost:3000
+```
+
+## 🌐 Share with ngrok
+
+To share your local development with clients:
+
+### 1. Start Backend and Frontend
+Follow the steps in Local Development above.
+
+### 2. Expose Frontend with ngrok
+```bash
+ngrok http 3000
+```
+
+### 3. Share the ngrok URL
+Send the ngrok URL (e.g., `https://xxx.ngrok-free.app`) to your client. The frontend will automatically proxy API requests to your local backend through Vite's proxy configuration.
+
+**Note**: Only the frontend needs ngrok. The backend stays on localhost:8000.
+
+## 📋 Database Schema
+
+Your Supabase table should include these columns:
+- `id` (integer, primary key)
+- `title_translated` (text)
+- `content_translated` (text)
+- `images` (text/json)
+- `sourceWebsite` (text)
+- `url` (text) - Required for AI rewriting
+- `title_modified` (text) - Populated after AI processing
+- `content_modified` (text) - Populated after AI processing
+
+## 💡 Usage Tips
+
+### AI Rewriting Workflow
+1. Go to "System Prompt 設定專區" and create your custom prompts
+2. Navigate to "AI 寫新聞" tab
+3. Use filters to find desired news articles
+4. Select multiple news articles (checkboxes)
+5. Select one or more system prompts
+6. Click submit to process (all prompts are combined and applied to each news article)
+7. View results in "處理後新聞列表"
+
+### Processing with Multiple Prompts
+If you need to use different prompts for different news articles:
+- **Option 1** (Recommended): Process in batches - select news set A with prompt A, submit, then select news set B with prompt B, submit
+- **Option 2**: Select multiple prompts - they will be combined and applied to all selected news
+
+## 📝 License
 
 MIT License
