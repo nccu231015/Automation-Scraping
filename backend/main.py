@@ -9,6 +9,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 from supabase import create_client, Client
 from openai import OpenAI
+import requests
+import base64
+from requests_oauthlib import OAuth1
 
 # 載入環境變數
 env_path = Path(__file__).parent.parent / '.env'
@@ -52,6 +55,32 @@ if not openai_api_key:
 else:
     openai_client = OpenAI(api_key=openai_api_key)
     print(f"✅ OpenAI 客戶端已初始化")
+
+# WordPress 配置初始化
+wordpress_url = os.getenv("WORDPRESS_URL")
+wordpress_username = os.getenv("WORDPRESS_USERNAME")
+wordpress_app_password = os.getenv("WORDPRESS_APP_PASSWORD")
+
+if not wordpress_url or not wordpress_username or not wordpress_app_password:
+    print("⚠️ 警告: 未設定完整的 WordPress 配置，發布到 WordPress 功能將無法使用")
+    wordpress_configured = False
+else:
+    wordpress_configured = True
+    print(f"✅ WordPress 配置已載入")
+    print(f"📍 WordPress 網站: {wordpress_url}")
+
+# PIXNET 配置初始化
+pixnet_client_key = os.getenv("PIXNET_CLIENT_KEY")
+pixnet_client_secret = os.getenv("PIXNET_CLIENT_SECRET")
+pixnet_access_token = os.getenv("PIXNET_ACCESS_TOKEN")
+pixnet_access_token_secret = os.getenv("PIXNET_ACCESS_TOKEN_SECRET")
+
+if not all([pixnet_client_key, pixnet_client_secret, pixnet_access_token, pixnet_access_token_secret]):
+    print("⚠️ 警告: 未設定完整的 PIXNET 配置，發布到 PIXNET 功能將無法使用")
+    pixnet_configured = False
+else:
+    pixnet_configured = True
+    print(f"✅ PIXNET 配置已載入")
 
 # 暫存 system prompts (在實際應用中應該存在資料庫)
 system_prompts_storage = []
@@ -102,6 +131,29 @@ class AIRewriteResult(BaseModel):
     url: str
     title_modified: str
     content_modified: str
+    success: bool
+    error: Optional[str] = None
+
+class WordPressPublishRequest(BaseModel):
+    news_ids: List[int]  # 要發布的新聞 ID 列表
+
+class WordPressPublishResult(BaseModel):
+    news_id: int
+    news_url: str
+    wordpress_post_id: Optional[int] = None
+    wordpress_post_url: Optional[str] = None
+    success: bool
+    error: Optional[str] = None
+
+class PixnetPublishRequest(BaseModel):
+    news_ids: List[int]  # 要發布的新聞 ID 列表
+    status: Optional[str] = "draft"  # publish, draft, pending
+
+class PixnetPublishResult(BaseModel):
+    news_id: int
+    news_url: str
+    pixnet_article_id: Optional[str] = None
+    pixnet_article_url: Optional[str] = None
     success: bool
     error: Optional[str] = None
 
@@ -423,6 +475,551 @@ async def ai_rewrite_news(request: AIRewriteRequest):
         "success": success_count,
         "failed": fail_count,
         "results": results
+    }
+
+@app.post("/api/wordpress-publish")
+async def publish_to_wordpress(request: WordPressPublishRequest):
+    """將選定的新聞發布到 WordPress"""
+    if not wordpress_configured:
+        raise HTTPException(status_code=503, detail="WordPress 配置未設定")
+    
+    if not request.news_ids:
+        raise HTTPException(status_code=400, detail="至少需要選擇一則新聞")
+    
+    results = []
+    
+    # 建立 WordPress 認證 header
+    credentials = f"{wordpress_username}:{wordpress_app_password}"
+    token = base64.b64encode(credentials.encode()).decode()
+    headers = {
+        "Authorization": f"Basic {token}",
+        "Content-Type": "application/json"
+    }
+    
+    print("\n" + "="*80)
+    print(f"🚀 開始發布到 WordPress")
+    print(f"📊 總計：{len(request.news_ids)} 則新聞")
+    print(f"🌐 WordPress 網站: {wordpress_url}")
+    print("="*80 + "\n")
+    
+    # 處理每則新聞
+    for idx, news_id in enumerate(request.news_ids, 1):
+        try:
+            print(f"\n{'─'*80}")
+            print(f"📰 處理第 {idx}/{len(request.news_ids)} 則新聞")
+            print(f"🆔 新聞 ID: {news_id}")
+            
+            # 從 Supabase 獲取新聞資料
+            print(f"📥 正在從資料庫獲取新聞...")
+            response = supabase.table(table_name).select(
+                "id, url, title_translated, content_translated, title_modified, content_modified, images"
+            ).eq("id", news_id).execute()
+            
+            if not response.data:
+                raise ValueError(f"找不到 ID 為 {news_id} 的新聞")
+            
+            news_item = response.data[0]
+            
+            # 優先使用 AI 重寫後的內容，否則使用翻譯內容
+            title = news_item.get("title_modified") or news_item.get("title_translated", "")
+            content = news_item.get("content_modified") or news_item.get("content_translated", "")
+            news_url = news_item.get("url", "")
+            images = news_item.get("images")
+            
+            if not title or not content:
+                raise ValueError("新聞標題或內容為空")
+            
+            print(f"📝 標題: {title[:50]}{'...' if len(title) > 50 else ''}")
+            print(f"📄 內容長度: {len(content)} 字")
+            
+            # 處理圖片
+            featured_media_id = None
+            if images:
+                try:
+                    # 解析 images（可能是 JSON 字串或列表）
+                    if isinstance(images, str):
+                        images_list = json.loads(images)
+                    else:
+                        images_list = images
+                    
+                    # 如果有圖片，上傳第一張作為特色圖片
+                    if images_list and len(images_list) > 0:
+                        first_image_url = images_list[0] if isinstance(images_list, list) else images_list.get('url')
+                        if first_image_url:
+                            print(f"🖼️  正在上傳特色圖片...")
+                            featured_media_id = await upload_image_to_wordpress(first_image_url, headers)
+                            if featured_media_id:
+                                print(f"✅ 特色圖片上傳成功 (ID: {featured_media_id})")
+                except Exception as img_error:
+                    print(f"⚠️  圖片上傳失敗: {str(img_error)}")
+            
+            # 構建 WordPress 文章內容
+            # 在內容末尾添加原始來源連結
+            content_with_source = content
+            if news_url:
+                content_with_source += f"\n\n<p><small>原始來源: <a href='{news_url}' target='_blank'>{news_url}</a></small></p>"
+            
+            # 準備發布到 WordPress 的資料
+            post_data = {
+                "title": title,
+                "content": content_with_source,
+                "status": "draft",  # 設為草稿，可以改為 "publish" 直接發布
+                "format": "standard"
+            }
+            
+            # 如果有特色圖片，加入資料
+            if featured_media_id:
+                post_data["featured_media"] = featured_media_id
+            
+            print(f"📤 正在發布到 WordPress...")
+            
+            # 發送請求到 WordPress REST API
+            wp_api_url = f"{wordpress_url.rstrip('/')}/wp-json/wp/v2/posts"
+            wp_response = requests.post(wp_api_url, headers=headers, json=post_data, timeout=30)
+            
+            if wp_response.status_code in [200, 201]:
+                wp_data = wp_response.json()
+                wp_post_id = wp_data.get("id")
+                wp_post_url = wp_data.get("link")
+                
+                print(f"✅ 發布成功")
+                print(f"   🆔 WordPress 文章 ID: {wp_post_id}")
+                print(f"   🔗 WordPress 文章網址: {wp_post_url}")
+                print(f"{'─'*80}\n")
+                
+                results.append(WordPressPublishResult(
+                    news_id=news_id,
+                    news_url=news_url,
+                    wordpress_post_id=wp_post_id,
+                    wordpress_post_url=wp_post_url,
+                    success=True,
+                    error=None
+                ))
+            else:
+                error_msg = f"WordPress API 返回錯誤: {wp_response.status_code} - {wp_response.text}"
+                raise ValueError(error_msg)
+            
+        except Exception as e:
+            error_msg = str(e)
+            print(f"❌ 發布失敗 (第 {idx}/{len(request.news_ids)} 則)")
+            print(f"   錯誤: {error_msg}")
+            print(f"   詳細錯誤: {traceback.format_exc()}")
+            print(f"{'─'*80}\n")
+            
+            results.append(WordPressPublishResult(
+                news_id=news_id,
+                news_url=news_item.get("url", "") if 'news_item' in locals() else "",
+                wordpress_post_id=None,
+                wordpress_post_url=None,
+                success=False,
+                error=error_msg
+            ))
+    
+    # 統計成功和失敗的數量
+    success_count = sum(1 for r in results if r.success)
+    fail_count = len(results) - success_count
+    
+    print("\n" + "="*80)
+    print(f"🎉 發布完成！")
+    print(f"✅ 成功: {success_count} 則")
+    print(f"❌ 失敗: {fail_count} 則")
+    print("="*80 + "\n")
+    
+    return {
+        "total": len(results),
+        "success": success_count,
+        "failed": fail_count,
+        "results": results
+    }
+
+async def upload_image_to_wordpress(image_url: str, headers: dict) -> Optional[int]:
+    """上傳圖片到 WordPress 媒體庫"""
+    try:
+        # 下載圖片
+        img_response = requests.get(image_url, timeout=30)
+        if img_response.status_code != 200:
+            return None
+        
+        # 從 URL 提取檔案名稱
+        filename = image_url.split("/")[-1].split("?")[0]
+        if not filename:
+            filename = "image.jpg"
+        
+        # 上傳到 WordPress
+        wp_media_url = f"{wordpress_url.rstrip('/')}/wp-json/wp/v2/media"
+        
+        files = {
+            'file': (filename, img_response.content, img_response.headers.get('content-type', 'image/jpeg'))
+        }
+        
+        # 注意：上傳媒體時需要不同的 headers
+        upload_headers = {
+            "Authorization": headers["Authorization"]
+        }
+        
+        upload_response = requests.post(
+            wp_media_url, 
+            headers=upload_headers, 
+            files=files,
+            timeout=60
+        )
+        
+        if upload_response.status_code in [200, 201]:
+            media_data = upload_response.json()
+            return media_data.get("id")
+        
+        return None
+    except Exception as e:
+        print(f"   ⚠️  圖片上傳異常: {str(e)}")
+        return None
+
+@app.post("/api/pixnet-publish")
+async def publish_to_pixnet(request: PixnetPublishRequest):
+    """將選定的新聞發布到 PIXNET 痞客邦"""
+    if not pixnet_configured:
+        raise HTTPException(status_code=503, detail="PIXNET 配置未設定，請在 .env 檔案中設定 PIXNET_CLIENT_KEY, PIXNET_CLIENT_SECRET, PIXNET_ACCESS_TOKEN, PIXNET_ACCESS_TOKEN_SECRET")
+    
+    if not request.news_ids:
+        raise HTTPException(status_code=400, detail="至少需要選擇一則新聞")
+    
+    results = []
+    
+    # 嘗試兩種認證方式：OAuth 2.0 Bearer Token 和 OAuth 1.0a
+    # PIXNET API 支援 OAuth 2.0，使用 access_token 作為 Bearer Token
+    use_oauth2 = True  # 優先嘗試 OAuth 2.0
+    
+    print("\n" + "="*80)
+    print(f"🚀 開始發布到 PIXNET 痞客邦")
+    print(f"📊 總計：{len(request.news_ids)} 則新聞")
+    print(f"🔐 認證方式: {'OAuth 2.0 Bearer Token' if use_oauth2 else 'OAuth 1.0a'}")
+    print("="*80 + "\n")
+    
+    # 處理每則新聞
+    for idx, news_id in enumerate(request.news_ids, 1):
+        try:
+            print(f"\n{'─'*80}")
+            print(f"📰 處理第 {idx}/{len(request.news_ids)} 則新聞")
+            print(f"🆔 新聞 ID: {news_id}")
+            
+            # 從 Supabase 獲取新聞資料
+            print(f"📥 正在從資料庫獲取新聞...")
+            response = supabase.table(table_name).select(
+                "id, url, title_translated, content_translated, title_modified, content_modified, images"
+            ).eq("id", news_id).execute()
+            
+            if not response.data:
+                raise ValueError(f"找不到 ID 為 {news_id} 的新聞")
+            
+            news_item = response.data[0]
+            
+            # 優先使用 AI 重寫後的內容，否則使用翻譯內容
+            title = news_item.get("title_modified") or news_item.get("title_translated", "")
+            content = news_item.get("content_modified") or news_item.get("content_translated", "")
+            news_url = news_item.get("url", "")
+            images = news_item.get("images")
+            
+            if not title or not content:
+                raise ValueError("新聞標題或內容為空")
+            
+            print(f"📝 標題: {title[:50]}{'...' if len(title) > 50 else ''}")
+            print(f"📄 內容長度: {len(content)} 字")
+            
+            # 處理內容：添加圖片和原始來源
+            html_content = ""
+            
+            # 添加圖片到內容
+            if images:
+                try:
+                    if isinstance(images, str):
+                        images_list = json.loads(images)
+                    else:
+                        images_list = images
+                    
+                    if images_list and len(images_list) > 0:
+                        for img_url in images_list:
+                            if isinstance(img_url, str) and img_url:
+                                html_content += f'<p><img src="{img_url}" alt="新聞圖片" style="max-width:100%;"></p>\n'
+                except Exception as img_error:
+                    print(f"⚠️  處理圖片時出錯: {str(img_error)}")
+            
+            # 添加主要內容
+            # 將換行符轉換為 HTML 段落
+            paragraphs = content.split('\n')
+            for para in paragraphs:
+                para = para.strip()
+                if para:
+                    html_content += f"<p>{para}</p>\n"
+            
+            # 添加原始來源連結
+            if news_url:
+                html_content += f'\n<p><small>原始來源: <a href="{news_url}" target="_blank">{news_url}</a></small></p>'
+            
+            # 設定文章狀態
+            # PIXNET 狀態 (數字): 0: 刪除, 1: 草稿, 2: 公開, 3: 密碼, 4: 隱藏, 5: 好友
+            status_map = {
+                "publish": 2,   # 公開
+                "draft": 1,     # 草稿
+                "pending": 1,   # 待審核 -> 草稿
+                "hidden": 4     # 隱藏
+            }
+            article_status = status_map.get(request.status, 1)  # 預設為草稿
+            status_names = {1: "草稿", 2: "公開", 4: "隱藏"}
+            
+            # 準備發布到 PIXNET 的資料
+            # PIXNET API 參數參考: https://developer.pixnet.pro/#!/doc/pixnetApi/blogArticlesCreate
+            post_data = {
+                "title": title,
+                "body": html_content,
+                "status": article_status,
+                "format": "json"
+            }
+            
+            print(f"📤 正在發布到 PIXNET (狀態: {status_names.get(article_status, article_status)})...")
+            
+            # 發送請求到 PIXNET API
+            pixnet_api_url = "https://emma.pixnet.cc/blog/articles"
+            
+            if use_oauth2:
+                # OAuth 2.0 Bearer Token 認證
+                headers = {
+                    "Authorization": f"Bearer {pixnet_access_token}",
+                    "Content-Type": "application/x-www-form-urlencoded"
+                }
+                pixnet_response = requests.post(
+                    pixnet_api_url,
+                    headers=headers,
+                    data=post_data,
+                    timeout=30
+                )
+            else:
+                # OAuth 1.0a 認證
+                auth = OAuth1(
+                    pixnet_client_key,
+                    client_secret=pixnet_client_secret,
+                    resource_owner_key=pixnet_access_token,
+                    resource_owner_secret=pixnet_access_token_secret
+                )
+                pixnet_response = requests.post(
+                    pixnet_api_url,
+                    auth=auth,
+                    data=post_data,
+                    timeout=30
+                )
+            
+            print(f"🔍 PIXNET API 回應狀態碼: {pixnet_response.status_code}")
+            print(f"🔍 PIXNET API 回應內容: {pixnet_response.text[:500] if len(pixnet_response.text) > 500 else pixnet_response.text}")
+            
+            if pixnet_response.status_code == 200:
+                pixnet_data = pixnet_response.json()
+                
+                # 檢查 API 回應是否成功
+                if pixnet_data.get("error") == 0 or pixnet_data.get("error") is None:
+                    article_info = pixnet_data.get("article", {})
+                    article_id = article_info.get("id", "")
+                    article_link = article_info.get("link", "")
+                    
+                    # 如果沒有 link，嘗試組合 URL
+                    if not article_link and article_id:
+                        user = pixnet_data.get("user", "")
+                        if user:
+                            article_link = f"https://{user}.pixnet.net/blog/post/{article_id}"
+                    
+                    print(f"✅ 發布成功")
+                    print(f"   🆔 PIXNET 文章 ID: {article_id}")
+                    print(f"   🔗 PIXNET 文章網址: {article_link}")
+                    print(f"{'─'*80}\n")
+                    
+                    results.append(PixnetPublishResult(
+                        news_id=news_id,
+                        news_url=news_url,
+                        pixnet_article_id=str(article_id),
+                        pixnet_article_url=article_link,
+                        success=True,
+                        error=None
+                    ))
+                else:
+                    error_msg = pixnet_data.get("message", "未知錯誤")
+                    raise ValueError(f"PIXNET API 返回錯誤: {error_msg}")
+            else:
+                # 嘗試解析錯誤訊息
+                try:
+                    error_data = pixnet_response.json()
+                    error_msg = error_data.get("message", pixnet_response.text)
+                except:
+                    error_msg = pixnet_response.text
+                raise ValueError(f"PIXNET API 返回錯誤 ({pixnet_response.status_code}): {error_msg}")
+            
+        except Exception as e:
+            error_msg = str(e)
+            print(f"❌ 發布失敗 (第 {idx}/{len(request.news_ids)} 則)")
+            print(f"   錯誤: {error_msg}")
+            print(f"   詳細錯誤: {traceback.format_exc()}")
+            print(f"{'─'*80}\n")
+            
+            results.append(PixnetPublishResult(
+                news_id=news_id,
+                news_url=news_item.get("url", "") if 'news_item' in locals() else "",
+                pixnet_article_id=None,
+                pixnet_article_url=None,
+                success=False,
+                error=error_msg
+            ))
+    
+    # 統計成功和失敗的數量
+    success_count = sum(1 for r in results if r.success)
+    fail_count = len(results) - success_count
+    
+    print("\n" + "="*80)
+    print(f"🎉 發布完成！")
+    print(f"✅ 成功: {success_count} 則")
+    print(f"❌ 失敗: {fail_count} 則")
+    print("="*80 + "\n")
+    
+    return {
+        "total": len(results),
+        "success": success_count,
+        "failed": fail_count,
+        "results": results
+    }
+
+@app.get("/api/pixnet-status")
+async def get_pixnet_status():
+    """檢查 PIXNET 配置狀態"""
+    return {
+        "configured": pixnet_configured,
+        "message": "PIXNET 配置已完成" if pixnet_configured else "PIXNET 配置未完成，請設定環境變數"
+    }
+
+@app.get("/api/pixnet-check-phone")
+async def check_pixnet_phone():
+    """檢查 PIXNET 手機驗證狀態 - 同時測試兩種認證方式"""
+    if not pixnet_configured:
+        return {"error": "PIXNET 配置未設定"}
+    
+    results = {
+        "oauth2_result": None,
+        "oauth1_result": None,
+        "token_info": {
+            "client_key_length": len(pixnet_client_key) if pixnet_client_key else 0,
+            "client_secret_length": len(pixnet_client_secret) if pixnet_client_secret else 0,
+            "access_token_length": len(pixnet_access_token) if pixnet_access_token else 0,
+            "access_token_secret_length": len(pixnet_access_token_secret) if pixnet_access_token_secret else 0,
+            "access_token_preview": pixnet_access_token[:10] + "..." if pixnet_access_token and len(pixnet_access_token) > 10 else pixnet_access_token
+        }
+    }
+    
+    # 測試 OAuth 2.0 Bearer Token
+    try:
+        headers = {
+            "Authorization": f"Bearer {pixnet_access_token}"
+        }
+        url = "https://emma.pixnet.cc/account?format=json"
+        response = requests.get(url, headers=headers, timeout=10)
+        print(f"📱 OAuth 2.0 測試 - 狀態碼: {response.status_code}")
+        print(f"📱 OAuth 2.0 測試 - 回應: {response.text[:500]}")
+        results["oauth2_result"] = {
+            "status_code": response.status_code,
+            "response": response.json() if response.headers.get('content-type', '').find('json') >= 0 else response.text[:200]
+        }
+    except Exception as e:
+        results["oauth2_result"] = {"error": str(e)}
+    
+    # 測試 OAuth 1.0a
+    try:
+        auth = OAuth1(
+            pixnet_client_key,
+            client_secret=pixnet_client_secret,
+            resource_owner_key=pixnet_access_token,
+            resource_owner_secret=pixnet_access_token_secret
+        )
+        url = "https://emma.pixnet.cc/account?format=json"
+        response = requests.get(url, auth=auth, timeout=10)
+        print(f"📱 OAuth 1.0a 測試 - 狀態碼: {response.status_code}")
+        print(f"📱 OAuth 1.0a 測試 - 回應: {response.text[:500]}")
+        results["oauth1_result"] = {
+            "status_code": response.status_code,
+            "response": response.json() if response.headers.get('content-type', '').find('json') >= 0 else response.text[:200]
+        }
+    except Exception as e:
+        results["oauth1_result"] = {"error": str(e)}
+    
+    return results
+
+@app.get("/api/pixnet-test")
+async def test_pixnet_connection():
+    """測試 PIXNET API 連接和認證"""
+    if not pixnet_configured:
+        return {
+            "success": False,
+            "error": "PIXNET 配置未設定"
+        }
+    
+    results = {
+        "oauth2_test": None,
+        "oauth1_test": None,
+        "account_info": None
+    }
+    
+    # 測試 1: OAuth 2.0 Bearer Token - 取得帳戶資訊
+    try:
+        headers = {
+            "Authorization": f"Bearer {pixnet_access_token}"
+        }
+        response = requests.get(
+            "https://emma.pixnet.cc/account?format=json",
+            headers=headers,
+            timeout=10
+        )
+        results["oauth2_test"] = {
+            "status_code": response.status_code,
+            "response": response.json() if response.status_code == 200 else response.text[:200]
+        }
+        if response.status_code == 200:
+            data = response.json()
+            if data.get("error") == 0:
+                results["account_info"] = data.get("account", {})
+    except Exception as e:
+        results["oauth2_test"] = {"error": str(e)}
+    
+    # 測試 2: OAuth 1.0a - 取得帳戶資訊
+    try:
+        auth = OAuth1(
+            pixnet_client_key,
+            client_secret=pixnet_client_secret,
+            resource_owner_key=pixnet_access_token,
+            resource_owner_secret=pixnet_access_token_secret
+        )
+        response = requests.get(
+            "https://emma.pixnet.cc/account?format=json",
+            auth=auth,
+            timeout=10
+        )
+        results["oauth1_test"] = {
+            "status_code": response.status_code,
+            "response": response.json() if response.status_code == 200 else response.text[:200]
+        }
+        if response.status_code == 200 and results["account_info"] is None:
+            data = response.json()
+            if data.get("error") == 0:
+                results["account_info"] = data.get("account", {})
+    except Exception as e:
+        results["oauth1_test"] = {"error": str(e)}
+    
+    # 判斷哪種認證方式有效
+    oauth2_works = (results["oauth2_test"] and 
+                    isinstance(results["oauth2_test"], dict) and 
+                    results["oauth2_test"].get("status_code") == 200)
+    oauth1_works = (results["oauth1_test"] and 
+                    isinstance(results["oauth1_test"], dict) and 
+                    results["oauth1_test"].get("status_code") == 200)
+    
+    return {
+        "success": oauth2_works or oauth1_works,
+        "oauth2_works": oauth2_works,
+        "oauth1_works": oauth1_works,
+        "recommended": "OAuth 2.0" if oauth2_works else ("OAuth 1.0a" if oauth1_works else "無法認證"),
+        "details": results,
+        "hint": "如果兩種認證都失敗，請確認 .env 中的 PIXNET 設定是否正確"
     }
 
 if __name__ == "__main__":

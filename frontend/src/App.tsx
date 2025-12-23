@@ -49,6 +49,9 @@ function App() {
   const [processedWebsiteFilter, setProcessedWebsiteFilter] = useState('all')
   const [processedTitleKeyword, setProcessedTitleKeyword] = useState('')
   const [selectedProcessedNews, setSelectedProcessedNews] = useState<NewsItem | null>(null)
+  const [selectedProcessedNewsIds, setSelectedProcessedNewsIds] = useState<number[]>([])
+  const [wordpressPublishing, setWordpressPublishing] = useState(false)
+  const [pixnetPublishing, setPixnetPublishing] = useState(false)
   
   // System Prompt 表單狀態
   const [promptName, setPromptName] = useState('')
@@ -352,6 +355,131 @@ function App() {
     } finally {
       setNewsLoading(false)
       setAiProcessing(false)
+    }
+  }
+
+  const toggleProcessedNewsSelection = (id: number) => {
+    setSelectedProcessedNewsIds((prev) => {
+      const newSelection = prev.includes(id) ? prev.filter((newsId) => newsId !== id) : [...prev, id]
+      console.log('選擇要發布的新聞 IDs:', newSelection)
+      return newSelection
+    })
+  }
+
+  const handleWordPressPublish = async () => {
+    if (selectedProcessedNewsIds.length === 0) {
+      alert('請至少選擇一則新聞')
+      return
+    }
+
+    if (!confirm(`確定要發布 ${selectedProcessedNewsIds.length} 則新聞到 WordPress 嗎？`)) {
+      return
+    }
+
+    setWordpressPublishing(true)
+    setError(null)
+
+    try {
+      console.log('發布新聞到 WordPress，IDs:', selectedProcessedNewsIds)
+      
+      const response = await axios.post('/api/wordpress-publish', {
+        news_ids: selectedProcessedNewsIds
+      })
+
+      const { total, success, failed, results } = response.data
+
+      // 顯示結果
+      let resultMessage = `發布完成！\n\n總計：${total} 則\n成功：${success} 則\n失敗：${failed} 則\n\n`
+      
+      if (success > 0) {
+        resultMessage += '成功發布的新聞：\n'
+        results.forEach((result: any) => {
+          if (result.success) {
+            resultMessage += `- ID ${result.news_id}: ${result.wordpress_post_url}\n`
+          }
+        })
+      }
+
+      if (failed > 0) {
+        resultMessage += '\n失敗的項目：\n'
+        results.forEach((result: any) => {
+          if (!result.success) {
+            resultMessage += `- ID ${result.news_id}: ${result.error}\n`
+          }
+        })
+      }
+
+      alert(resultMessage)
+      
+      // 清空選擇
+      setSelectedProcessedNewsIds([])
+
+    } catch (err: any) {
+      console.error('發布到 WordPress 失敗:', err)
+      const errorMsg = err.response?.data?.detail || err.message || '未知錯誤'
+      setError(`發布到 WordPress 失敗: ${errorMsg}`)
+      alert(`發布失敗：${errorMsg}`)
+    } finally {
+      setWordpressPublishing(false)
+    }
+  }
+
+  const handlePixnetPublish = async () => {
+    if (selectedProcessedNewsIds.length === 0) {
+      alert('請至少選擇一則新聞')
+      return
+    }
+
+    if (!confirm(`確定要發布 ${selectedProcessedNewsIds.length} 則新聞到 PIXNET 痞客邦嗎？`)) {
+      return
+    }
+
+    setPixnetPublishing(true)
+    setError(null)
+
+    try {
+      console.log('發布新聞到 PIXNET，IDs:', selectedProcessedNewsIds)
+      
+      const response = await axios.post('/api/pixnet-publish', {
+        news_ids: selectedProcessedNewsIds,
+        status: 'draft'  // 預設為草稿
+      })
+
+      const { total, success, failed, results } = response.data
+
+      // 顯示結果
+      let resultMessage = `PIXNET 發布完成！\n\n總計：${total} 則\n成功：${success} 則\n失敗：${failed} 則\n\n`
+      
+      if (success > 0) {
+        resultMessage += '成功發布的新聞：\n'
+        results.forEach((result: any) => {
+          if (result.success) {
+            resultMessage += `- ID ${result.news_id}: ${result.pixnet_article_url || '(草稿)'}\n`
+          }
+        })
+      }
+
+      if (failed > 0) {
+        resultMessage += '\n失敗的項目：\n'
+        results.forEach((result: any) => {
+          if (!result.success) {
+            resultMessage += `- ID ${result.news_id}: ${result.error}\n`
+          }
+        })
+      }
+
+      alert(resultMessage)
+      
+      // 清空選擇
+      setSelectedProcessedNewsIds([])
+
+    } catch (err: any) {
+      console.error('發布到 PIXNET 失敗:', err)
+      const errorMsg = err.response?.data?.detail || err.message || '未知錯誤'
+      setError(`發布到 PIXNET 失敗: ${errorMsg}`)
+      alert(`發布失敗：${errorMsg}`)
+    } finally {
+      setPixnetPublishing(false)
     }
   }
 
@@ -770,7 +898,7 @@ function App() {
         <div className="ai-section">
           <h2>處理後新聞列表</h2>
           <p className="ai-note">
-            顯示已由 AI 重寫完成的新聞，包含重寫後的標題與內容。
+            顯示已由 AI 重寫完成的新聞，包含重寫後的標題與內容。選擇要發布到 WordPress 的新聞。
           </p>
 
           {processedLoading ? (
@@ -856,45 +984,129 @@ function App() {
                             )}
                           </div>
                         ) : (
-                          <div className="news-grid">
-                            {filteredProcessed.map((news) => {
-                              const thumbnails = news.images ? parseImages(news.images).slice(0, 1) : []
-                              return (
-                                <div
-                                  key={news.id}
-                                  className="news-card"
-                                  onClick={() => setSelectedProcessedNews(news)}
-                                  style={{ cursor: 'pointer' }}
+                          <>
+                            {/* 發布按鈕區 */}
+                            <div className="ai-submit-bar" style={{ marginBottom: '20px', display: 'flex', gap: '15px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
+                              {/* WordPress 發布按鈕 */}
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                <button
+                                  type="button"
+                                  className={`btn btn-primary ${wordpressPublishing ? 'btn-loading' : ''}`}
+                                  onClick={handleWordPressPublish}
+                                  disabled={wordpressPublishing || pixnetPublishing || selectedProcessedNewsIds.length === 0}
+                                  style={{
+                                    opacity: selectedProcessedNewsIds.length === 0 || wordpressPublishing ? 0.7 : 1,
+                                    cursor: wordpressPublishing ? 'wait' : 'pointer',
+                                    backgroundColor: selectedProcessedNewsIds.length > 0 ? '#667eea' : '#999'
+                                  }}
                                 >
-                                  {thumbnails.length > 0 && (
-                                    <div style={{ marginBottom: '10px' }}>
-                                      <img 
-                                        src={thumbnails[0]} 
-                                        alt="縮圖" 
+                                  {wordpressPublishing ? '發布中...' : `發布到 WordPress (${selectedProcessedNewsIds.length} 則)`}
+                                </button>
+                              </div>
+
+                              {/* PIXNET 發布按鈕 */}
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                <button
+                                  type="button"
+                                  className={`btn ${pixnetPublishing ? 'btn-loading' : ''}`}
+                                  onClick={handlePixnetPublish}
+                                  disabled={pixnetPublishing || wordpressPublishing || selectedProcessedNewsIds.length === 0}
+                                  style={{
+                                    opacity: selectedProcessedNewsIds.length === 0 || pixnetPublishing ? 0.7 : 1,
+                                    cursor: pixnetPublishing ? 'wait' : 'pointer',
+                                    backgroundColor: selectedProcessedNewsIds.length > 0 ? '#ff6b35' : '#999',
+                                    color: 'white',
+                                    border: 'none',
+                                    padding: '10px 20px',
+                                    borderRadius: '5px',
+                                    fontWeight: 'bold'
+                                  }}
+                                >
+                                  {pixnetPublishing ? '發布中...' : `發布到 PIXNET (${selectedProcessedNewsIds.length} 則)`}
+                                </button>
+                              </div>
+
+                              <div className="ai-submit-hint" style={{ flex: '1 1 100%' }}>
+                                選擇要發布的新聞，點擊按鈕發布到 WordPress 或 PIXNET 痞客邦。
+                                <br />
+                                <small style={{ color: selectedProcessedNewsIds.length > 0 ? 'green' : '#666' }}>
+                                  已選擇：{selectedProcessedNewsIds.length} 則新聞
+                                  {selectedProcessedNewsIds.length > 0 ? ' ✓ 可以發布' : ''}
+                                </small>
+                              </div>
+                            </div>
+
+                            <div className="news-grid">
+                              {filteredProcessed.map((news) => {
+                                const thumbnails = news.images ? parseImages(news.images).slice(0, 1) : []
+                                const isSelected = selectedProcessedNewsIds.includes(news.id)
+                                return (
+                                  <div
+                                    key={news.id}
+                                    className="news-card"
+                                    style={{ 
+                                      cursor: 'pointer',
+                                      position: 'relative',
+                                      border: isSelected ? '2px solid #667eea' : '1px solid #e0e0e0',
+                                      backgroundColor: isSelected ? '#f0f4ff' : 'white'
+                                    }}
+                                  >
+                                    {/* 多選框 */}
+                                    <div 
+                                      style={{ 
+                                        position: 'absolute', 
+                                        top: '10px', 
+                                        left: '10px', 
+                                        zIndex: 10 
+                                      }}
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={isSelected}
+                                        onChange={() => toggleProcessedNewsSelection(news.id)}
                                         style={{ 
-                                          width: '100%', 
-                                          height: '150px', 
-                                          objectFit: 'cover', 
-                                          borderRadius: '5px' 
-                                        }} 
+                                          width: '20px', 
+                                          height: '20px', 
+                                          cursor: 'pointer' 
+                                        }}
                                       />
                                     </div>
-                                  )}
-                                  <h3 style={{ color: '#764ba2' }}>{news.title_modified || '無標題'}</h3>
-                                  <p>
-                                    {news.content_modified
-                                      ? news.content_modified.substring(0, 100) + '...'
-                                      : '無內容'}
-                                  </p>
-                                  {news.sourceWebsite && (
-                                    <div style={{ fontSize: '12px', color: '#999', marginTop: '8px' }}>
-                                      來源：{news.sourceWebsite}
+
+                                    <div onClick={() => setSelectedProcessedNews(news)}>
+                                      {thumbnails.length > 0 && (
+                                        <div style={{ marginBottom: '10px' }}>
+                                          <img 
+                                            src={thumbnails[0]} 
+                                            alt="縮圖" 
+                                            style={{ 
+                                              width: '100%', 
+                                              height: '150px', 
+                                              objectFit: 'cover', 
+                                              borderRadius: '5px' 
+                                            }} 
+                                          />
+                                        </div>
+                                      )}
+                                      <h3 style={{ color: '#764ba2', marginTop: '10px' }}>
+                                        {news.title_modified || '無標題'}
+                                      </h3>
+                                      <p>
+                                        {news.content_modified
+                                          ? news.content_modified.substring(0, 100) + '...'
+                                          : '無內容'}
+                                      </p>
+                                      {news.sourceWebsite && (
+                                        <div style={{ fontSize: '12px', color: '#999', marginTop: '8px' }}>
+                                          來源：{news.sourceWebsite}
+                                        </div>
+                                      )}
                                     </div>
-                                  )}
-                                </div>
-                              )
-                            })}
-                          </div>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          </>
                         )}
                       </>
                     )

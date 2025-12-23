@@ -8,9 +8,11 @@ A full-stack news management and AI rewriting system that allows you to process 
 - **AI News Rewriting**: Rewrite news titles and content using OpenAI GPT models
 - **System Prompt Management**: Create and manage custom AI prompts stored in browser localStorage
 - **Processed News List**: View AI-rewritten news (displays only AI results, not original content)
+- **WordPress Publishing**: Batch publish selected news to WordPress via REST API
 - **Multi-selection**: Select multiple news articles and system prompts for batch processing
 - **Preview Modal**: Preview news content before processing
 - **Filtering**: Filter by website source and title keywords across all tabs
+- **Image Upload**: Automatically upload featured images to WordPress media library
 
 ## 📦 Tech Stack
 
@@ -31,12 +33,21 @@ A full-stack news management and AI rewriting system that allows you to process 
 ### 1. Setup Environment Variables
 Create a `.env` file in the project root:
 ```env
+# Supabase 設定
 SUPABASE_URL=your_supabase_url
 SUPABASE_KEY=your_supabase_key
-SUPABASE_TABLE=your_table_name
+SUPABASE_TABLE_NAME=news_data
+
+# OpenAI 設定
 OPENAI_API_KEY=your_openai_api_key
-ALLOWED_SOURCE_WEBSITES=https://example.com/,https://another-site.com/
+
+# WordPress 設定（選填，用於發布功能）
+WORDPRESS_URL=https://your-wordpress-site.com
+WORDPRESS_USERNAME=your_username
+WORDPRESS_APP_PASSWORD=your_app_password
 ```
+
+> 📖 **WordPress 設定詳細說明**: 請參閱 [WORDPRESS_SETUP.md](WORDPRESS_SETUP.md)
 
 ### 2. Install Dependencies
 
@@ -110,6 +121,18 @@ Your Supabase table should include these columns:
 If you need to use different prompts for different news articles:
 - **Option 1** (Recommended): Process in batches - select news set A with prompt A, submit, then select news set B with prompt B, submit
 - **Option 2**: Select multiple prompts - they will be combined and applied to all selected news
+
+### WordPress Publishing Workflow
+1. Complete AI rewriting first (see "AI Rewriting Workflow" above)
+2. Go to "處理後新聞列表" tab
+3. Select the news articles you want to publish (checkboxes)
+4. Click "發布到 WordPress" button
+5. The system will:
+   - Upload the first image as featured image
+   - Use AI-rewritten content (or original if not rewritten)
+   - Add source link at the end of the article
+   - Publish as draft (can be changed to publish directly)
+6. Check the results and WordPress post URLs
 
 ## 📝 License
 
