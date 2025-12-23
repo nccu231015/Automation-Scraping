@@ -1,6 +1,6 @@
-# Automation Scraping - AI News Rewriting System
+# Automation Scraping - AI News Rewriting & Multi-Platform Publishing System
 
-A full-stack news management and AI rewriting system that allows you to process news articles with customizable AI prompts.
+A full-stack news management and AI rewriting system that allows you to process news articles with customizable AI prompts and publish to multiple platforms.
 
 ## 🚀 Features
 
@@ -8,11 +8,17 @@ A full-stack news management and AI rewriting system that allows you to process 
 - **AI News Rewriting**: Rewrite news titles and content using OpenAI GPT models
 - **System Prompt Management**: Create and manage custom AI prompts stored in browser localStorage
 - **Processed News List**: View AI-rewritten news (displays only AI results, not original content)
-- **WordPress Publishing**: Batch publish selected news to WordPress via REST API
+- **🖼️ Image Selection**: Select specific images for each news item before publishing
+- **📤 Multi-Platform Publishing**: 
+  - **WordPress**: Batch publish with custom featured images
+  - **PIXNET**: Publish to PIXNET blog platform
+  - **Facebook**: Post to Facebook Pages with image selection
+  - **Threads**: Publish to Threads with automatic token refresh
 - **Multi-selection**: Select multiple news articles and system prompts for batch processing
 - **Preview Modal**: Preview news content before processing
 - **Filtering**: Filter by website source and title keywords across all tabs
 - **Image Upload**: Automatically upload featured images to WordPress media library
+- **Auto Token Refresh**: Threads access token automatically refreshes (60-day validity)
 
 ## 📦 Tech Stack
 
@@ -20,13 +26,16 @@ A full-stack news management and AI rewriting system that allows you to process 
 - React + TypeScript
 - Vite
 - Axios
-- Tailwind CSS
+- CSS
 
 ### Backend
 - Python 3.12
 - FastAPI
 - Supabase (PostgreSQL)
 - OpenAI API
+- WordPress REST API
+- Facebook Graph API
+- Threads API
 
 ## 🛠️ Local Development
 
@@ -45,6 +54,20 @@ OPENAI_API_KEY=your_openai_api_key
 WORDPRESS_URL=https://your-wordpress-site.com
 WORDPRESS_USERNAME=your_username
 WORDPRESS_APP_PASSWORD=your_app_password
+
+# PIXNET 設定（選填）
+PIXNET_CLIENT_KEY=your_pixnet_client_key
+PIXNET_CLIENT_SECRET=your_pixnet_client_secret
+PIXNET_ACCESS_TOKEN=your_pixnet_access_token
+PIXNET_ACCESS_TOKEN_SECRET=your_pixnet_access_token_secret
+
+# Facebook 設定（選填）
+FACEBOOK_PAGE_ACCESS_TOKEN=your_facebook_page_access_token
+
+# Threads 設定（選填）
+THREADS_USER_ID=your_threads_user_id
+THREADS_ACCESS_TOKEN=your_threads_access_token
+THREADS_APP_SECRET=your_threads_app_secret
 ```
 
 > 📖 **WordPress 設定詳細說明**: 請參閱 [WORDPRESS_SETUP.md](WORDPRESS_SETUP.md)
@@ -66,7 +89,8 @@ npm install
 
 **Terminal 1 - Backend:**
 ```bash
-python3.12 backend/main.py
+cd backend
+python main.py
 # Runs on http://localhost:8000
 ```
 
@@ -100,7 +124,7 @@ Your Supabase table should include these columns:
 - `id` (integer, primary key)
 - `title_translated` (text)
 - `content_translated` (text)
-- `images` (text/json)
+- `images` (text/json) - Array of image URLs
 - `sourceWebsite` (text)
 - `url` (text) - Required for AI rewriting
 - `title_modified` (text) - Populated after AI processing
@@ -109,30 +133,83 @@ Your Supabase table should include these columns:
 ## 💡 Usage Tips
 
 ### AI Rewriting Workflow
-1. Go to "System Prompt 設定專區" and create your custom prompts
-2. Navigate to "AI 寫新聞" tab
+1. Go to \"System Prompt 設定專區\" and create your custom prompts
+2. Navigate to \"AI 寫新聞\" tab
 3. Use filters to find desired news articles
 4. Select multiple news articles (checkboxes)
 5. Select one or more system prompts
 6. Click submit to process (all prompts are combined and applied to each news article)
-7. View results in "處理後新聞列表"
+7. View results in \"處理後新聞列表\"
 
 ### Processing with Multiple Prompts
 If you need to use different prompts for different news articles:
 - **Option 1** (Recommended): Process in batches - select news set A with prompt A, submit, then select news set B with prompt B, submit
 - **Option 2**: Select multiple prompts - they will be combined and applied to all selected news
 
-### WordPress Publishing Workflow
-1. Complete AI rewriting first (see "AI Rewriting Workflow" above)
-2. Go to "處理後新聞列表" tab
-3. Select the news articles you want to publish (checkboxes)
-4. Click "發布到 WordPress" button
-5. The system will:
-   - Upload the first image as featured image
+### Multi-Platform Publishing Workflow
+
+#### 1. Image Selection
+1. In \"處理後新聞列表\" tab, select news articles (checkboxes)
+2. For each news item, click on the image thumbnails below to select your preferred featured image
+3. Selected images will have a purple border and checkmark
+
+#### 2. Publishing to WordPress
+1. Select news articles with checkboxes
+2. Optionally select specific images for each article
+3. Click \"發布到 WordPress\" button
+4. The system will:
+   - Upload selected image (or first image) as featured image
    - Use AI-rewritten content (or original if not rewritten)
    - Add source link at the end of the article
-   - Publish as draft (can be changed to publish directly)
-6. Check the results and WordPress post URLs
+   - Publish as draft by default
+5. Check the results and WordPress post URLs
+
+#### 3. Publishing to Facebook
+1. Select news articles and images
+2. Click \"發布到 Facebook\" button
+3. Posts will include title, content, source link, and selected image
+4. Published directly to your Facebook Page
+
+#### 4. Publishing to Threads
+1. Select news articles and images
+2. Click \"發布到 Threads\" button
+3. System will automatically:
+   - Refresh access token if needed (valid for 60 days)
+   - Create Threads container with image
+   - Publish the post
+4. Content automatically truncated to 500 characters (Threads limit)
+
+### Platform-Specific Notes
+
+**WordPress:**
+- Supports custom featured images
+- Published as drafts by default
+- Includes full content and source links
+
+**PIXNET:**
+- OAuth 1.0 authentication
+- Published as drafts by default
+- Full HTML content support
+
+**Facebook:**
+- Requires Page Access Token
+- Uses `/me/photos` endpoint
+- Image required for each post
+
+**Threads:**
+- Two-step publishing process (create container → publish)
+- Automatic token refresh every 60 days
+- 500 character limit (auto-truncated)
+- Image required for each post
+
+## 🔧 API Endpoints
+
+- `GET /api/news` - Fetch news from Supabase
+- `POST /api/ai-rewrite` - Process news with AI
+- `POST /api/wordpress-publish` - Publish to WordPress
+- `POST /api/pixnet-publish` - Publish to PIXNET
+- `POST /api/facebook-publish` - Publish to Facebook
+- `POST /api/threads-publish` - Publish to Threads
 
 ## 📝 License
 
