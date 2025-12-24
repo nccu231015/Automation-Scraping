@@ -17,6 +17,20 @@ from requests_oauthlib import OAuth1
 from datetime import datetime, timedelta
 import time
 
+
+# 定義 Prompt 模型
+class SystemPrompt(BaseModel):
+    name: str  # Prompt 名稱
+    prompt: str  # Prompt 內容
+
+
+class PromptResponse(BaseModel):
+    id: int
+    name: str
+    prompt: str
+    created_at: Optional[str] = None
+
+
 # 載入環境變數
 env_path = Path(__file__).parent.parent / ".env"
 load_dotenv(dotenv_path=env_path)
@@ -2069,6 +2083,49 @@ async def test_pixnet_connection():
         "details": results,
         "hint": "如果兩種認證都失敗，請確認 .env 中的 PIXNET 設定是否正確",
     }
+
+
+# --- System Prompts API Endpoints ---
+
+
+@app.get("/api/prompts", response_model=List[PromptResponse])
+async def get_prompts():
+    """獲取所有 System Prompts"""
+    try:
+        response = supabase.table("system_prompts").select("*").order("id").execute()
+        return response.data
+    except Exception as e:
+        print(f"❌ 獲取 Prompts 失敗: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/prompts", response_model=PromptResponse)
+async def create_prompt(prompt: SystemPrompt):
+    """創建新的 System Prompt"""
+    try:
+        data = {"name": prompt.name, "prompt": prompt.prompt}
+        response = supabase.table("system_prompts").insert(data).execute()
+
+        if not response.data:
+            raise HTTPException(status_code=500, detail="創建失敗，無數據返回")
+
+        return response.data[0]
+    except Exception as e:
+        print(f"❌ 創建 Prompt 失敗: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/prompts/{prompt_id}")
+async def delete_prompt(prompt_id: int):
+    """刪除指定的 System Prompt"""
+    try:
+        response = (
+            supabase.table("system_prompts").delete().eq("id", prompt_id).execute()
+        )
+        return {"message": "Prompt deleted successfully"}
+    except Exception as e:
+        print(f"❌ 刪除 Prompt 失敗: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":
