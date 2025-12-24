@@ -135,50 +135,61 @@ else:
     print("✅ Threads 配置已載入")
     print(f"📍 Threads User ID: {threads_user_id}")
 
-# Threads token 刷新時間追蹤（存儲在內存中）
-# Token 元數據文件路徑
-token_metadata_file = Path(__file__).parent.parent / "token_metadata.json"
+# Token 元數據存儲 (遷移到 Supabase 以支持 Cloud Run 無狀態部署)
+SETTINGS_TABLE = "app_settings"
 
 
 def load_token_metadata():
-    """從文件加載 token 元數據"""
-    if token_metadata_file.exists():
-        try:
-            with open(token_metadata_file, "r") as f:
-                return json.load(f)
-        except Exception as e:
-            print(f"⚠️ 無法讀取 token 元數據: {e}")
+    """從 Supabase 加載 token 元數據"""
+    try:
+        # 讀取 app_settings 表
+        response = supabase.table(SETTINGS_TABLE).select("*").execute()
+        metadata = {}
+        if response.data:
+            for item in response.data:
+                metadata[item["key"]] = item["value"]
+        return metadata
+    except Exception as e:
+        print(
+            f"⚠️ 無法從數據庫讀取 token 元數據 (若是初次運行請確保已建立 app_settings 表): {e}"
+        )
     return {}
 
 
 def save_token_metadata(metadata):
-    """保存 token 元數據到文件"""
+    """保存 token 元數據到 Supabase"""
     try:
-        with open(token_metadata_file, "w") as f:
-            json.dump(metadata, f, indent=2, default=str)
+        # 將 metadata 的每個 key-value 存入/更新到數據庫
+        for key, value in metadata.items():
+            data = {
+                "key": key,
+                "value": str(value) if value is not None else None,
+                "updated_at": datetime.now().isoformat(),
+            }
+            supabase.table(SETTINGS_TABLE).upsert(data).execute()
     except Exception as e:
-        print(f"⚠️ 無法保存 token 元數據: {e}")
+        print(f"⚠️ 無法保存 token 元數據到數據庫: {e}")
 
 
 # 加載已存儲的元數據
 stored_metadata = load_token_metadata()
 
+
+# 輔助函數：解析時間字符串
+def parse_stored_time(time_str):
+    if time_str and isinstance(time_str, str):
+        try:
+            return datetime.fromisoformat(time_str)
+        except:
+            pass
+    return None
+
+
 threads_token_data = {
     "access_token": threads_access_token,
-    "last_refresh": stored_metadata.get("threads_last_refresh"),
-    "expires_in": 5184000,  # 60天（秒）- 修正為正確的有效期
+    "last_refresh": parse_stored_time(stored_metadata.get("threads_last_refresh")),
+    "expires_in": 5184000,  # 60天（秒）
 }
-
-# 如果 last_refresh 是字符串，轉換為 datetime
-if threads_token_data["last_refresh"] and isinstance(
-    threads_token_data["last_refresh"], str
-):
-    try:
-        threads_token_data["last_refresh"] = datetime.fromisoformat(
-            threads_token_data["last_refresh"]
-        )
-    except:
-        threads_token_data["last_refresh"] = None
 
 # Instagram 配置初始化
 instagram_user_id = os.getenv("IG_USER_ID")
