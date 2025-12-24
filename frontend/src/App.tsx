@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react'
 import axios from 'axios'
 
-// 使用相對路徑，讓 Vite proxy 自動轉發 /api 請求到後端
-// 這樣透過 ngrok 公開前端時，API 請求會正確轉發到本地後端
-axios.defaults.baseURL = ''
+// 設定 API Base URL
+// 生產環境 (Vercel): 使用環境變數 VITE_API_BASE_URL 指向 GCP Cloud Run
+// 本地開發: 如果沒設定環境變數，預設為空字符串 (使用 Vite Proxy 轉發到 localhost:8000)
+axios.defaults.baseURL = import.meta.env.VITE_API_BASE_URL || ''
 
 interface NewsItem {
   id: number
