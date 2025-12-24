@@ -15,6 +15,7 @@ import requests
 import base64
 from requests_oauthlib import OAuth1
 from datetime import datetime, timedelta
+import time
 
 # 載入環境變數
 env_path = Path(__file__).parent.parent / ".env"
@@ -135,10 +136,71 @@ else:
     print(f"📍 Threads User ID: {threads_user_id}")
 
 # Threads token 刷新時間追蹤（存儲在內存中）
+# Token 元數據文件路徑
+token_metadata_file = Path(__file__).parent.parent / "token_metadata.json"
+
+
+def load_token_metadata():
+    """從文件加載 token 元數據"""
+    if token_metadata_file.exists():
+        try:
+            with open(token_metadata_file, "r") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"⚠️ 無法讀取 token 元數據: {e}")
+    return {}
+
+
+def save_token_metadata(metadata):
+    """保存 token 元數據到文件"""
+    try:
+        with open(token_metadata_file, "w") as f:
+            json.dump(metadata, f, indent=2, default=str)
+    except Exception as e:
+        print(f"⚠️ 無法保存 token 元數據: {e}")
+
+
+# 加載已存儲的元數據
+stored_metadata = load_token_metadata()
+
 threads_token_data = {
     "access_token": threads_access_token,
-    "last_refresh": None if threads_configured else None,
-    "expires_in": 86400,  # 24小時（秒）
+    "last_refresh": stored_metadata.get("threads_last_refresh"),
+    "expires_in": 5184000,  # 60天（秒）- 修正為正確的有效期
+}
+
+# 如果 last_refresh 是字符串，轉換為 datetime
+if threads_token_data["last_refresh"] and isinstance(
+    threads_token_data["last_refresh"], str
+):
+    try:
+        threads_token_data["last_refresh"] = datetime.fromisoformat(
+            threads_token_data["last_refresh"]
+        )
+    except:
+        threads_token_data["last_refresh"] = None
+
+# Instagram 配置初始化
+instagram_user_id = os.getenv("IG_USER_ID")
+instagram_access_token = os.getenv("IG_ACCESS_TOKEN")
+instagram_app_secret = os.getenv("IG_APP_SECRET")
+instagram_app_id = os.getenv("IG_APP_ID")  # 需要 App ID 來刷新 token
+
+if not all([instagram_user_id, instagram_access_token]):
+    print("⚠️ 警告: 未設定完整的 Instagram 配置，發布到 Instagram 功能將無法使用")
+    instagram_configured = False
+else:
+    instagram_configured = True
+    print("✅ Instagram 配置已載入")
+    print(f"📍 Instagram User ID: {instagram_user_id}")
+    if instagram_app_id and instagram_app_secret:
+        print("✅ Instagram Token 刷新功能已啟用")
+
+# Instagram token 刷新時間追蹤（存儲在內存中）
+instagram_token_data = {
+    "access_token": instagram_access_token,
+    "last_refresh": None if instagram_configured else None,
+    "expires_in": 5184000,  # 60天（秒）
 }
 
 # 暫存 system prompts (在實際應用中應該存在資料庫)
@@ -255,6 +317,19 @@ class ThreadsPublishResult(BaseModel):
     news_url: str
     threads_post_id: Optional[str] = None
     threads_post_url: Optional[str] = None
+    success: bool
+    error: Optional[str] = None
+
+
+class InstagramPublishRequest(BaseModel):
+    items: List[PublishItem]
+
+
+class InstagramPublishResult(BaseModel):
+    news_id: int
+    news_url: str
+    instagram_post_id: Optional[str] = None
+    instagram_post_url: Optional[str] = None
     success: bool
     error: Optional[str] = None
 
@@ -1022,6 +1097,284 @@ async def upload_image_to_wordpress(image_url: str, headers: dict) -> Optional[i
         return None
 
 
+# Instagram 相關功能
+def refresh_instagram_token():
+    """刷新 Instagram Long-Lived Access Token（如果需要）"""
+    global instagram_token_data
+
+    # 如果沒有 App ID 和 Secret，無法刷新
+    if not instagram_app_id or not instagram_app_secret:
+        print("⚠️  無法刷新 Instagram Token：未設定 IG_APP_ID 或 IG_APP_SECRET")
+        return instagram_token_data["access_token"]
+
+    # 檢查是否需要刷新
+    if instagram_token_data["last_refresh"] is not None:
+        time_since_refresh = datetime.now() - instagram_token_data["last_refresh"]
+        # 如果距離上次刷新不到59天，不需要刷新
+        if time_since_refresh.total_seconds() < (
+            instagram_token_data["expires_in"] - 86400
+        ):
+            print("✅ Instagram Token 仍然有效，無需刷新")
+            return instagram_token_data["access_token"]
+
+    print("🔄 正在刷新 Instagram Access Token...")
+
+    try:
+        # Instagram Long-Lived Token 刷新 API
+        # 文檔: https://developers.facebook.com/docs/instagram-platform/instagram-graph-api/reference/refresh-access-token
+        refresh_url = "https://graph.instagram.com/refresh_access_token"
+        params = {
+            "grant_type": "ig_refresh_token",
+            "access_token": instagram_token_data["access_token"],
+        }
+
+        response = requests.get(refresh_url, params=params, timeout=30)
+
+        if response.status_code == 200:
+            data = response.json()
+            new_token = data.get("access_token")
+            expires_in = data.get("expires_in", 5184000)  # 預設60天
+
+            if new_token:
+                instagram_token_data["access_token"] = new_token
+                instagram_token_data["last_refresh"] = datetime.now()
+                instagram_token_data["expires_in"] = expires_in
+                print(
+                    f"✅ Instagram Token 刷新成功，有效期：{expires_in}秒（{expires_in / 86400:.0f}天）"
+                )
+                return new_token
+
+        print(f"⚠️ Instagram Token 刷新失敗: {response.status_code} - {response.text}")
+        # 刷新失敗時，繼續使用舊 token
+        return instagram_token_data["access_token"]
+
+    except Exception as e:
+        print(f"⚠️ Instagram Token 刷新異常: {str(e)}")
+        # 異常時，繼續使用舊 token
+        return instagram_token_data["access_token"]
+
+
+@app.post("/api/instagram-publish")
+async def publish_to_instagram(request: InstagramPublishRequest):
+    """將選定的新聞發布到 Instagram"""
+    if not instagram_configured:
+        raise HTTPException(
+            status_code=503,
+            detail="Instagram 配置未設定，請在 .env 檔案中設定 IG_USER_ID, IG_ACCESS_TOKEN",
+        )
+
+    if not request.items:
+        raise HTTPException(status_code=400, detail="至少需要一則新聞")
+
+    # 刷新 token（如果需要）
+    current_token = refresh_instagram_token()
+
+    results = []
+
+    print("\n" + "=" * 80)
+    print("🚀 開始發布到 Instagram")
+    print(f"📊 總計：{len(request.items)} 則新聞")
+    print("=" * 80 + "\n")
+
+    # 處理每則新聞
+    for idx, item_data in enumerate(request.items, 1):
+        news_id = item_data.news_id
+        selected_image = item_data.selected_image
+
+        try:
+            print(f"\n{'─' * 80}")
+            print(f"📰 處理第 {idx}/{len(request.items)} 則新聞")
+            print(f"🆔 新聞 ID: {news_id}")
+            if selected_image:
+                print(f"🖼️  指定圖片: {selected_image}")
+
+            # 從 Supabase 獲取新聞資料
+            print("📥 正在從資料庫獲取新聞...")
+            response = (
+                supabase.table(table_name)
+                .select(
+                    "id, url, title_translated, content_translated, title_modified, content_modified, images"
+                )
+                .eq("id", news_id)
+                .execute()
+            )
+
+            if not response.data:
+                raise ValueError(f"找不到 ID 為 {news_id} 的新聞")
+
+            news_item = response.data[0]
+
+            # 優先使用 AI 重寫後的內容，否則使用翻譯內容
+            title = news_item.get("title_modified") or news_item.get(
+                "title_translated", ""
+            )
+            content = news_item.get("content_modified") or news_item.get(
+                "content_translated", ""
+            )
+            news_url = news_item.get("url", "")
+
+            if not title or not content:
+                raise ValueError("新聞標題或內容為空")
+
+            print(f"📝 標題: {title[:50]}{'...' if len(title) > 50 else ''}")
+            print(f"📄 內容長度: {len(content)} 字")
+
+            # 決定要使用哪張圖片
+            image_to_use = None
+
+            if selected_image:
+                image_to_use = selected_image
+            else:
+                # 如果沒有指定，使用原有的第一張（備用邏輯）
+                images = news_item.get("images")
+                if images:
+                    try:
+                        if isinstance(images, str):
+                            images_list = json.loads(images)
+                        else:
+                            images_list = images
+
+                        if images_list and len(images_list) > 0:
+                            image_to_use = (
+                                images_list[0]
+                                if isinstance(images_list, list)
+                                else images_list.get("url")
+                            )
+                    except Exception:
+                        pass
+
+            if not image_to_use:
+                print("⚠️  無圖片可上傳，跳過此新聞")
+                raise ValueError("Instagram 發布需要圖片")
+
+            # 構建 Instagram 貼文文字（標題 + 內容）
+            # Instagram 限制 2200 字
+            caption = f"{title}\n\n{content}"
+            if news_url:
+                caption += f"\n\n🔗 {news_url}"
+
+            # 截斷至 2200 字
+            if len(caption) > 2200:
+                caption = caption[:2197] + "..."
+
+            # 步驟1: 創建 Instagram 媒體容器
+            print("📤 正在創建 Instagram 媒體容器...")
+            print(f"🖼️  圖片 URL: {image_to_use}")
+
+            # Debug: 檢查 token
+            print(f"🔑 Access Token 前20字符: {current_token[:20]}...")
+            print(f"🔑 Access Token 長度: {len(current_token)}")
+            print(f"📍 Instagram User ID: {instagram_user_id}")
+
+            # 使用 graph.instagram.com 並使用 Authorization header
+            create_url = f"https://graph.instagram.com/v21.0/{instagram_user_id}/media"
+            headers = {
+                "Authorization": f"Bearer {current_token}",
+                "Content-Type": "application/json",
+            }
+            create_payload = {"image_url": image_to_use, "caption": caption}
+
+            print(f"📤 API URL: {create_url}")
+            create_response = requests.post(
+                create_url, headers=headers, json=create_payload, timeout=30
+            )
+
+            if create_response.status_code != 200:
+                error_msg = f"Instagram 媒體容器創建失敗: {create_response.status_code} - {create_response.text}"
+                raise ValueError(error_msg)
+
+            create_data_result = create_response.json()
+            creation_id = create_data_result.get("id")
+
+            if not creation_id:
+                raise ValueError("無法獲取 Creation ID")
+
+            print(f"✅ 媒體容器創建成功 (ID: {creation_id})")
+
+            # 稍等幾秒確保 Meta 伺服器處理完畢
+            print("⏳ 等待 Meta 處理媒體...")
+            time.sleep(5)
+
+            # 步驟2: 發布媒體容器
+            print("📤 正在發布 Instagram 貼文...")
+
+            publish_url = (
+                f"https://graph.instagram.com/v21.0/{instagram_user_id}/media_publish"
+            )
+            publish_payload = {"creation_id": creation_id}
+
+            publish_response = requests.post(
+                publish_url, headers=headers, json=publish_payload, timeout=30
+            )
+
+            if publish_response.status_code == 200:
+                publish_data_result = publish_response.json()
+                instagram_post_id = publish_data_result.get("id")
+                # Instagram 貼文網址格式
+                instagram_post_url = (
+                    f"https://www.instagram.com/p/{instagram_post_id}/"
+                    if instagram_post_id
+                    else None
+                )
+
+                print("✅ 發布成功")
+                print(f"   🆔 Instagram 貼文 ID: {instagram_post_id}")
+                if instagram_post_url:
+                    print(f"   🔗 Instagram 貼文網址: {instagram_post_url}")
+                print(f"{'─' * 80}\n")
+
+                results.append(
+                    InstagramPublishResult(
+                        news_id=news_id,
+                        news_url=news_url,
+                        instagram_post_id=instagram_post_id,
+                        instagram_post_url=instagram_post_url,
+                        success=True,
+                        error=None,
+                    )
+                )
+            else:
+                error_msg = f"Instagram 發布失敗: {publish_response.status_code} - {publish_response.text}"
+                raise ValueError(error_msg)
+
+        except Exception as e:
+            error_msg = str(e)
+            print(f"❌ 發布失敗 (第 {idx}/{len(request.items)} 則)")
+            print(f"   錯誤: {error_msg}")
+            print(f"   詳細錯誤: {traceback.format_exc()}")
+            print(f"{'─' * 80}\n")
+
+            results.append(
+                InstagramPublishResult(
+                    news_id=news_id,
+                    news_url=news_item.get("url", "")
+                    if "news_item" in locals()
+                    else "",
+                    instagram_post_id=None,
+                    instagram_post_url=None,
+                    success=False,
+                    error=error_msg,
+                )
+            )
+
+    # 統計成功和失敗的數量
+    success_count = sum(1 for r in results if r.success)
+    fail_count = len(results) - success_count
+
+    print("\n" + "=" * 80)
+    print("🎉 發布完成！")
+    print(f"✅ 成功: {success_count} 則")
+    print(f"❌ 失敗: {fail_count} 則")
+    print("=" * 80 + "\n")
+
+    return {
+        "total": len(results),
+        "success": success_count,
+        "failed": fail_count,
+        "results": results,
+    }
+
+
 # Threads 相關功能
 def refresh_threads_token():
     """刷新 Threads Access Token（如果需要）"""
@@ -1030,9 +1383,9 @@ def refresh_threads_token():
     # 檢查是否需要刷新
     if threads_token_data["last_refresh"] is not None:
         time_since_refresh = datetime.now() - threads_token_data["last_refresh"]
-        # 如果距離上次刷新不到 23 小時，不需要刷新
+        # 如果距離上次刷新不到59天，不需要刷新
         if time_since_refresh.total_seconds() < (
-            threads_token_data["expires_in"] - 3600
+            threads_token_data["expires_in"] - 86400  # 提前1天刷新
         ):
             print("✅ Threads Token 仍然有效，無需刷新")
             return threads_token_data["access_token"]
@@ -1052,13 +1405,21 @@ def refresh_threads_token():
         if response.status_code == 200:
             data = response.json()
             new_token = data.get("access_token")
-            expires_in = data.get("expires_in", 86400)
+            expires_in = data.get("expires_in", 5184000)  # 預設60天
 
             if new_token:
                 threads_token_data["access_token"] = new_token
                 threads_token_data["last_refresh"] = datetime.now()
                 threads_token_data["expires_in"] = expires_in
-                print(f"✅ Threads Token 刷新成功，有效期：{expires_in}秒")
+
+                # 保存元數據到文件
+                metadata = load_token_metadata()
+                metadata["threads_last_refresh"] = datetime.now().isoformat()
+                save_token_metadata(metadata)
+
+                print(
+                    f"✅ Threads Token 刷新成功，有效期：{expires_in}秒（{expires_in / 86400:.0f}天）"
+                )
                 return new_token
 
         print(f"⚠️ Threads Token 刷新失敗: {response.status_code} - {response.text}")

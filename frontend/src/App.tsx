@@ -55,6 +55,23 @@ function App() {
   const [pixnetPublishing, setPixnetPublishing] = useState(false)
   const [facebookPublishing, setFacebookPublishing] = useState(false)
   const [threadsPublishing, setThreadsPublishing] = useState(false)
+  const [instagramPublishing, setInstagramPublishing] = useState(false)
+
+  // 多平台發布選擇
+  const [selectedPlatforms, setSelectedPlatforms] = useState<{
+    wordpress: boolean
+    pixnet: boolean
+    facebook: boolean
+    threads: boolean
+    instagram: boolean
+  }>({
+    wordpress: false,
+    pixnet: false,
+    facebook: false,
+    threads: false,
+    instagram: false
+  })
+  const [isMultiPlatformPublishing, setIsMultiPlatformPublishing] = useState(false)
 
   // System Prompt 表單狀態
   const [promptName, setPromptName] = useState('')
@@ -659,6 +676,162 @@ function App() {
     }
   }
 
+  const handleInstagramPublish = async () => {
+    if (selectedProcessedNewsIds.length === 0) {
+      alert('請至少選擇一則新聞')
+      return
+    }
+
+    setInstagramPublishing(true)
+    setError(null)
+
+    try {
+      // 準備發布的項目，包含選定的圖片
+      const publishItems = selectedProcessedNewsIds.map(id => {
+        // 找出該新聞
+        const news = processedNewsList.find(n => n.id === id)
+        // 找出選定的圖片，如果沒有選定，則使用該新聞的第一張圖片
+        let selectedImage = selectedProcessedImages[id]
+
+        if (!selectedImage && news && news.images) {
+          const images = parseImages(news.images)
+          if (images.length > 0) {
+            selectedImage = images[0]
+          }
+        }
+
+        return {
+          news_id: id,
+          selected_image: selectedImage
+        }
+      })
+
+      console.log('發布新聞到 Instagram，Items:', publishItems)
+
+      const response = await axios.post('/api/instagram-publish', {
+        items: publishItems
+      })
+
+      const { total, success, failed, results } = response.data
+
+      // 顯示結果
+      let resultMessage = `Instagram 發布完成！\n\n總計：${total} 則\n成功：${success} 則\n失敗：${failed} 則\n\n`
+
+      if (success > 0) {
+        resultMessage += '成功發布的新聞：\n'
+        results.forEach((result: any) => {
+          if (result.success) {
+            resultMessage += `- ID ${result.news_id}: ${result.instagram_post_url || '(已發布)'}\n`
+          }
+        })
+      }
+
+      if (failed > 0) {
+        resultMessage += '\n失敗的項目：\n'
+        results.forEach((result: any) => {
+          if (!result.success) {
+            resultMessage += `- ID ${result.news_id}: ${result.error}\n`
+          }
+        })
+      }
+
+      alert(resultMessage)
+
+      // 清空選擇
+      setSelectedProcessedNewsIds([])
+      setSelectedProcessedImages({})
+
+    } catch (err: any) {
+      console.error('發布到 Instagram 失敗:', err)
+      const errorMsg = err.response?.data?.detail || err.message || '未知錯誤'
+      setError(`發布到 Instagram 失敗: ${errorMsg}`)
+      alert(`發布失敗：${errorMsg}`)
+    } finally {
+      setInstagramPublishing(false)
+    }
+  }
+
+  // 多平台發布處理
+  const handleMultiPlatformPublish = async () => {
+    if (selectedProcessedNewsIds.length === 0) {
+      alert('請至少選擇一則新聞')
+      return
+    }
+
+    const platformsToPublish = Object.entries(selectedPlatforms).filter(([_, selected]) => selected)
+
+    if (platformsToPublish.length === 0) {
+      alert('請至少選擇一個發布平台')
+      return
+    }
+
+    setIsMultiPlatformPublishing(true)
+    setError(null)
+
+    const results: any[] = []
+
+    // 按順序發布到各個平台
+    for (const [platform, _] of platformsToPublish) {
+      try {
+        console.log(`正在發布到 ${platform}...`)
+
+        switch (platform) {
+          case 'wordpress':
+            setWordpressPublishing(true)
+            await handleWordPressPublish()
+            setWordpressPublishing(false)
+            results.push({ platform: 'WordPress', success: true })
+            break
+
+          case 'pixnet':
+            setPixnetPublishing(true)
+            await handlePixnetPublish()
+            setPixnetPublishing(false)
+            results.push({ platform: 'PIXNET', success: true })
+            break
+
+          case 'facebook':
+            setFacebookPublishing(true)
+            await handleFacebookPublish()
+            setFacebookPublishing(false)
+            results.push({ platform: 'Facebook', success: true })
+            break
+
+          case 'threads':
+            setThreadsPublishing(true)
+            await handleThreadsPublish()
+            setThreadsPublishing(false)
+            results.push({ platform: 'Threads', success: true })
+            break
+
+          case 'instagram':
+            setInstagramPublishing(true)
+            await handleInstagramPublish()
+            setInstagramPublishing(false)
+            results.push({ platform: 'Instagram', success: true })
+            break
+        }
+      } catch (err: any) {
+        console.error(`發布到 ${platform} 失敗:`, err)
+        results.push({ platform, success: false, error: err.message })
+      }
+    }
+
+    setIsMultiPlatformPublishing(false)
+
+    // 顯示總結
+    const successCount = results.filter(r => r.success).length
+    const failCount = results.length - successCount
+
+    let summary = `多平台發布完成！\n\n總計：${results.length} 個平台\n成功：${successCount} 個\n失敗：${failCount} 個\n\n`
+
+    results.forEach(r => {
+      summary += `${r.success ? '✅' : '❌'} ${r.platform}${r.error ? `: ${r.error}` : ''}\n`
+    })
+
+    alert(summary)
+  }
+
   return (
     <div className="container">
       <div className="header">
@@ -1162,104 +1335,101 @@ function App() {
                         ) : (
                           <>
                             {/* 發布按鈕區 */}
-                            <div className="ai-submit-bar" style={{ marginBottom: '20px', display: 'flex', gap: '15px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
-                              {/* WordPress 發布按鈕 */}
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                <button
-                                  type="button"
-                                  className={`btn btn-primary ${wordpressPublishing ? 'btn-loading' : ''}`}
-                                  onClick={handleWordPressPublish}
-                                  disabled={wordpressPublishing || pixnetPublishing || facebookPublishing || threadsPublishing || selectedProcessedNewsIds.length === 0}
-                                  style={{
-                                    opacity: selectedProcessedNewsIds.length === 0 || wordpressPublishing ? 0.7 : 1,
-                                    cursor: wordpressPublishing ? 'wait' : 'pointer',
-                                    backgroundColor: selectedProcessedNewsIds.length > 0 ? '#667eea' : '#999',
-                                    color: 'white',
-                                    border: 'none',
-                                    padding: '10px 20px',
-                                    borderRadius: '5px',
-                                    fontWeight: 'bold'
-                                  }}
-                                >
-                                  {wordpressPublishing ? '發布中...' : `發布到 WordPress (${selectedProcessedNewsIds.length} 則)`}
-                                </button>
-                              </div>
+                            {/* 多平台選擇區 */}
+                            <div style={{ marginBottom: '15px', padding: '15px', backgroundColor: '#f8f9fa', borderRadius: '8px' }}>
+                              <h4 style={{ margin: '0 0 10px 0', fontSize: '16px', color: '#333' }}>選擇發布平台：</h4>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '15px' }}>
+                                <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedPlatforms.wordpress}
+                                    onChange={(e) => setSelectedPlatforms({ ...selectedPlatforms, wordpress: e.target.checked })}
+                                    style={{ marginRight: '8px', cursor: 'pointer', width: '18px', height: '18px' }}
+                                  />
+                                  <span style={{ fontWeight: 500, color: '#667eea' }}>WordPress</span>
+                                </label>
 
-                              {/* PIXNET 發布按鈕 */}
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                <button
-                                  type="button"
-                                  className={`btn ${pixnetPublishing ? 'btn-loading' : ''}`}
-                                  onClick={handlePixnetPublish}
-                                  disabled={pixnetPublishing || wordpressPublishing || facebookPublishing || threadsPublishing || selectedProcessedNewsIds.length === 0}
-                                  style={{
-                                    opacity: selectedProcessedNewsIds.length === 0 || pixnetPublishing ? 0.7 : 1,
-                                    cursor: pixnetPublishing ? 'wait' : 'pointer',
-                                    backgroundColor: selectedProcessedNewsIds.length > 0 ? '#ff6b35' : '#999',
-                                    color: 'white',
-                                    border: 'none',
-                                    padding: '10px 20px',
-                                    borderRadius: '5px',
-                                    fontWeight: 'bold'
-                                  }}
-                                >
-                                  {pixnetPublishing ? '發布中...' : `發布到 PIXNET (${selectedProcessedNewsIds.length} 則)`}
-                                </button>
-                              </div>
+                                <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedPlatforms.pixnet}
+                                    onChange={(e) => setSelectedPlatforms({ ...selectedPlatforms, pixnet: e.target.checked })}
+                                    style={{ marginRight: '8px', cursor: 'pointer', width: '18px', height: '18px' }}
+                                  />
+                                  <span style={{ fontWeight: 500, color: '#ff6b35' }}>PIXNET</span>
+                                </label>
 
-                              {/* Facebook 發布按鈕 */}
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                <button
-                                  type="button"
-                                  className={`btn ${facebookPublishing ? 'btn-loading' : ''}`}
-                                  onClick={handleFacebookPublish}
-                                  disabled={facebookPublishing || wordpressPublishing || pixnetPublishing || threadsPublishing || selectedProcessedNewsIds.length === 0}
-                                  style={{
-                                    opacity: selectedProcessedNewsIds.length === 0 || facebookPublishing ? 0.7 : 1,
-                                    cursor: facebookPublishing ? 'wait' : 'pointer',
-                                    backgroundColor: selectedProcessedNewsIds.length > 0 ? '#4267B2' : '#999',
-                                    color: 'white',
-                                    border: 'none',
-                                    padding: '10px 20px',
-                                    borderRadius: '5px',
-                                    fontWeight: 'bold'
-                                  }}
-                                >
-                                  {facebookPublishing ? '發布中...' : `發布到 Facebook (${selectedProcessedNewsIds.length} 則)`}
-                                </button>
-                              </div>
+                                <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedPlatforms.facebook}
+                                    onChange={(e) => setSelectedPlatforms({ ...selectedPlatforms, facebook: e.target.checked })}
+                                    style={{ marginRight: '8px', cursor: 'pointer', width: '18px', height: '18px' }}
+                                  />
+                                  <span style={{ fontWeight: 500, color: '#4267B2' }}>Facebook</span>
+                                </label>
 
-                              {/* Threads 發布按鈕 */}
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                <button
-                                  type="button"
-                                  className={`btn ${threadsPublishing ? 'btn-loading' : ''}`}
-                                  onClick={handleThreadsPublish}
-                                  disabled={threadsPublishing || wordpressPublishing || pixnetPublishing || facebookPublishing || selectedProcessedNewsIds.length === 0}
-                                  style={{
-                                    opacity: selectedProcessedNewsIds.length === 0 || threadsPublishing ? 0.7 : 1,
-                                    cursor: threadsPublishing ? 'wait' : 'pointer',
-                                    backgroundColor: selectedProcessedNewsIds.length > 0 ? '#000000' : '#999',
-                                    color: 'white',
-                                    border: 'none',
-                                    padding: '10px 20px',
-                                    borderRadius: '5px',
-                                    fontWeight: 'bold'
-                                  }}
-                                >
-                                  {threadsPublishing ? '發布中...' : `發布到 Threads (${selectedProcessedNewsIds.length} 則)`}
-                                </button>
-                              </div>
+                                <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedPlatforms.threads}
+                                    onChange={(e) => setSelectedPlatforms({ ...selectedPlatforms, threads: e.target.checked })}
+                                    style={{ marginRight: '8px', cursor: 'pointer', width: '18px', height: '18px' }}
+                                  />
+                                  <span style={{ fontWeight: 500, color: '#000000' }}>Threads</span>
+                                </label>
 
-                              <div className="ai-submit-hint" style={{ flex: '1 1 100%' }}>
-                                選擇要發布的新聞，點擊按鈕發布到 WordPress、PIXNET 痞客邦、Facebook 粉絲專頁或 Threads。
-                                <br />
-                                <small style={{ color: selectedProcessedNewsIds.length > 0 ? 'green' : '#666' }}>
-                                  已選擇：{selectedProcessedNewsIds.length} 則新聞
-                                  {selectedProcessedNewsIds.length > 0 ? ' ✓ 可以發布' : ''}
-                                </small>
+                                <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedPlatforms.instagram}
+                                    onChange={(e) => setSelectedPlatforms({ ...selectedPlatforms, instagram: e.target.checked })}
+                                    style={{ marginRight: '8px', cursor: 'pointer', width: '18px', height: '18px' }}
+                                  />
+                                  <span style={{ fontWeight: 500, color: '#E4405F' }}>Instagram</span>
+                                </label>
                               </div>
                             </div>
+
+                            {/* 統一發布按鈕 */}
+                            <button
+                              type="button"
+                              className={`btn btn-primary ${isMultiPlatformPublishing ? 'btn-loading' : ''}`}
+                              onClick={handleMultiPlatformPublish}
+                              disabled={isMultiPlatformPublishing || selectedProcessedNewsIds.length === 0}
+                              style={{
+                                opacity: selectedProcessedNewsIds.length === 0 || isMultiPlatformPublishing ? 0.7 : 1,
+                                cursor: isMultiPlatformPublishing ? 'wait' : 'pointer',
+                                backgroundColor: selectedProcessedNewsIds.length > 0 ? '#764ba2' : '#999',
+                                background: selectedProcessedNewsIds.length > 0 ? 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' : '#999',
+                                color: 'white',
+                                border: 'none',
+                                padding: '12px 30px',
+                                borderRadius: '8px',
+                                fontWeight: 'bold',
+                                fontSize: '16px',
+                                width: '100%',
+                                maxWidth: '400px',
+                                marginBottom: '20px'
+                              }}
+                            >
+                              {isMultiPlatformPublishing ? '發布中...' : `發布到選中平台 (${selectedProcessedNewsIds.length} 則新聞)`}
+                            </button>
+
+
+                            {/* 提示文字 */}
+                            <div className="ai-submit-hint" style={{ marginBottom: '20px', padding: '10px', backgroundColor: '#f0f7ff', borderRadius: '5px' }}>
+                              選擇要發布的新聞，勾選想要發布的平台，然後點擊「發布到選中平台」按鈕即可一次性發布到多個平台。
+                              <br />
+                              <small style={{ color: selectedProcessedNewsIds.length > 0 ? 'green' : '#666' }}>
+                                已選擇：{selectedProcessedNewsIds.length} 則新聞
+                                {Object.values(selectedPlatforms).filter(Boolean).length > 0 &&
+                                  ` | ${Object.values(selectedPlatforms).filter(Boolean).length} 個平台`
+                                }
+                                {selectedProcessedNewsIds.length > 0 && Object.values(selectedPlatforms).filter(Boolean).length > 0 ? ' ✓ 可以發布' : ''}
+                              </small>
+                            </div>
+
 
                             <div className="news-grid">
                               {filteredProcessed.map((news) => {
