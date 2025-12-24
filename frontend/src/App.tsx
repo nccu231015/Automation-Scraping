@@ -78,25 +78,21 @@ function App() {
   const [promptName, setPromptName] = useState('')
   const [promptContent, setPromptContent] = useState('')
 
-  // 從 localStorage 載入 System Prompts
+  // 改為從 API 獲取 System Prompts
   useEffect(() => {
-    const savedPrompts = localStorage.getItem('systemPrompts')
-    if (savedPrompts) {
-      try {
-        const prompts = JSON.parse(savedPrompts)
-        setSystemPrompts(prompts)
-      } catch (err) {
-        console.error('載入 System Prompts 失敗:', err)
-      }
-    }
+    fetchSystemPrompts()
   }, [])
 
-  // 當 systemPrompts 變更時，保存到 localStorage
-  useEffect(() => {
-    if (systemPrompts.length > 0) {
-      localStorage.setItem('systemPrompts', JSON.stringify(systemPrompts))
+  const fetchSystemPrompts = async () => {
+    try {
+      const response = await axios.get<SystemPrompt[]>('/api/prompts')
+      setSystemPrompts(response.data)
+    } catch (err) {
+      console.error('獲取 System Prompts 失敗:', err)
+      // 如果 API 失敗，設為空數組
+      setSystemPrompts([])
     }
-  }, [systemPrompts])
+  }
 
   // 獲取新聞列表
   useEffect(() => {
@@ -179,38 +175,47 @@ function App() {
     }
   }
 
-  const handleCreatePrompt = (e: React.FormEvent) => {
+  const handleCreatePrompt = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!promptName.trim() || !promptContent.trim()) {
       alert('請填寫名稱和內容')
       return
     }
 
-    // 在前端直接創建新的 System Prompt
-    const newPrompt: SystemPrompt = {
-      id: systemPrompts.length > 0 ? Math.max(...systemPrompts.map(p => p.id)) + 1 : 1,
-      name: promptName,
-      prompt: promptContent
-    }
+    try {
+      // 調用 API 創建 Prompt
+      await axios.post('/api/prompts', {
+        name: promptName,
+        prompt: promptContent
+      })
 
-    setSystemPrompts([...systemPrompts, newPrompt])
-    setPromptName('')
-    setPromptContent('')
-    alert('System Prompt 已儲存到瀏覽器')
+      // 重新獲取列表
+      await fetchSystemPrompts()
+
+      setPromptName('')
+      setPromptContent('')
+      alert('System Prompt 已儲存到雲端資料庫')
+    } catch (err) {
+      console.error('創建 Prompt 失敗:', err)
+      alert('儲存失敗，請重試')
+    }
   }
 
-  const handleDeletePrompt = (id: number) => {
+  const handleDeletePrompt = async (id: number) => {
     if (!confirm('確定要刪除這個 System Prompt 嗎？')) {
       return
     }
 
-    // 直接在前端刪除
-    const updatedPrompts = systemPrompts.filter(p => p.id !== id)
-    setSystemPrompts(updatedPrompts)
+    try {
+      // 調用 API 刪除 Prompt
+      await axios.delete(`/api/prompts/${id}`)
 
-    // 如果全部刪除，清空 localStorage
-    if (updatedPrompts.length === 0) {
-      localStorage.removeItem('systemPrompts')
+      // 更新前端狀態
+      const updatedPrompts = systemPrompts.filter(p => p.id !== id)
+      setSystemPrompts(updatedPrompts)
+    } catch (err) {
+      console.error('刪除 Prompt 失敗:', err)
+      alert('刪除失敗，請重試')
     }
   }
 
