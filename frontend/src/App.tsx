@@ -1017,7 +1017,7 @@ function App() {
           </form>
 
           <div className="prompt-list">
-            <h2>已儲存的 System Prompts（保存在瀏覽器）</h2>
+            <h2>System Prompts 列表（雲端同步）</h2>
             {systemPrompts.length === 0 ? (
               <div className="empty-state">目前沒有儲存的 System Prompts</div>
             ) : (
