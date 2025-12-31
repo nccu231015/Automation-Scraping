@@ -8,6 +8,10 @@ A full-stack news management and AI rewriting system that allows you to process 
 - **AI News Rewriting**: Rewrite news titles and content using OpenAI GPT models
 - **System Prompt Management**: Create and manage custom AI prompts stored in browser localStorage
 - **Processed News List**: View AI-rewritten news (displays only AI results, not original content)
+- **🏷️ AI News Classification**: 
+  - **Inline Editing**: Directly edit news categories in the list
+  - **Category Display**: View Chinese and English category tags
+  - **Advanced Search**: Filter news by category and search across titles and categories
 - **🖼️ Image Selection**: Select specific images for each news item before publishing
 - **📤 Multi-Platform Publishing**: 
   - **WordPress**: Batch publish with custom featured images
