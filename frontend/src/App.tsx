@@ -38,6 +38,7 @@ function App() {
   const [aiSelectedPromptIds, setAiSelectedPromptIds] = useState<number[]>([])
   const [aiResult, setAiResult] = useState('')
   const [aiWebsiteFilter, setAiWebsiteFilter] = useState('all')
+  const [aiCategoryFilter, setAiCategoryFilter] = useState('all') // 新增：AI寫新聞的分類篩選
   const [aiTitleKeyword, setAiTitleKeyword] = useState('')
   const [aiPreviewNews, setAiPreviewNews] = useState<NewsItem | null>(null)
   const [aiProcessing, setAiProcessing] = useState(false)
@@ -229,6 +230,8 @@ function App() {
   }
 
   const newsImages = selectedNews ? parseImages(selectedNews.images) : []
+
+  // 網站選項
   const websiteOptions = Array.from(
     new Set(
       newsList
@@ -236,15 +239,41 @@ function App() {
         .filter((url): url is string => !!url && url.length > 0)
     )
   )
+
+  // 分類選項
+  const categoryOptions = Array.from(
+    new Set(
+      newsList
+        .flatMap(news => [
+          ...(news.category_zh?.split('、') || []),
+          ...(news.category_en?.split(', ') || [])
+        ])
+        .filter(Boolean)
+    )
+  ).sort()
+
   const normalizedKeyword = aiTitleKeyword.trim().toLowerCase()
   const processedKeyword = processedTitleKeyword.trim().toLowerCase()
   const filteredNews = newsList.filter((news) => {
+    // 網站篩選
     const matchWebsite =
       aiWebsiteFilter === 'all' ||
       (news.sourceWebsite?.trim() || '') === aiWebsiteFilter
+
+    // 分類篩選 (新增)
+    const matchCategory =
+      aiCategoryFilter === 'all' ||
+      news.category_zh?.includes(aiCategoryFilter) ||
+      news.category_en?.toLowerCase().includes(aiCategoryFilter.toLowerCase())
+
+    // 關鍵字搜尋 (修改：支援標題與分類)
     const title = (news.title_translated || '').toLowerCase()
-    const matchTitle = normalizedKeyword === '' || title.includes(normalizedKeyword)
-    return matchWebsite && matchTitle
+    const matchKeyword = normalizedKeyword === '' ||
+      title.includes(normalizedKeyword) ||
+      news.category_zh?.includes(normalizedKeyword) ||
+      news.category_en?.toLowerCase().includes(normalizedKeyword)
+
+    return matchWebsite && matchCategory && matchKeyword
   })
   const aiPreviewImages = aiPreviewNews ? parseImages(aiPreviewNews.images) : []
 
@@ -1281,13 +1310,28 @@ function App() {
                   </select>
                 </div>
                 <div className="form-group">
-                  <label htmlFor="ai-title-filter">標題關鍵字</label>
+                  <label htmlFor="ai-category-filter">篩選分類</label>
+                  <select
+                    id="ai-category-filter"
+                    value={aiCategoryFilter}
+                    onChange={(e) => setAiCategoryFilter(e.target.value)}
+                  >
+                    <option value="all">全部分類</option>
+                    {categoryOptions.map((cat) => (
+                      <option key={cat} value={cat}>
+                        {cat}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label htmlFor="ai-title-filter">標題/分類關鍵字</label>
                   <input
                     id="ai-title-filter"
                     type="text"
                     value={aiTitleKeyword}
                     onChange={(e) => setAiTitleKeyword(e.target.value)}
-                    placeholder="輸入標題關鍵字"
+                    placeholder="搜尋標題或分類..."
                   />
                 </div>
               </div>
@@ -1337,6 +1381,35 @@ function App() {
                                 ))
                               ) : (
                                 <span className="ai-thumbnail-placeholder">無圖片</span>
+                              )}
+                            </div>
+                            {/* 分類標籤顯示 (右下角) */}
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '8px', gap: '6px', flexWrap: 'wrap' }}>
+                              {news.category_zh && (
+                                <span style={{
+                                  display: 'inline-block',
+                                  padding: '2px 8px',
+                                  background: '#e3f2fd',
+                                  color: '#1976d2',
+                                  borderRadius: '10px',
+                                  fontSize: '11px',
+                                  whiteSpace: 'nowrap'
+                                }}>
+                                  {news.category_zh}
+                                </span>
+                              )}
+                              {news.category_en && (
+                                <span style={{
+                                  display: 'inline-block',
+                                  padding: '2px 8px',
+                                  background: '#f3e5f5',
+                                  color: '#7b1fa2',
+                                  borderRadius: '10px',
+                                  fontSize: '11px',
+                                  whiteSpace: 'nowrap'
+                                }}>
+                                  {news.category_en}
+                                </span>
                               )}
                             </div>
                           </div>
