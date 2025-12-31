@@ -256,6 +256,8 @@ class NewsItem(BaseModel):
     url: Optional[str] = None  # 新聞網址
     title_modified: Optional[str] = None  # AI 重寫的標題
     content_modified: Optional[str] = None  # AI 重寫的內容
+    category_zh: Optional[str] = None  # 中文分類
+    category_en: Optional[str] = None  # 英文分類
 
     class Config:
         # 允許額外的欄位
@@ -520,6 +522,29 @@ async def get_news_by_id(news_id: int):
         print(f"ERROR: 獲取單筆新聞失敗: {str(e)}")
         print(f"ERROR: 詳細錯誤: {error_detail}")
         raise HTTPException(status_code=500, detail=f"獲取新聞失敗: {str(e)}")
+
+
+@app.patch("/api/news/{news_id}/category")
+async def update_news_category(news_id: int, category_zh: str, category_en: str):
+    """更新新聞分類"""
+    try:
+        # 更新資料庫
+        response = (
+            supabase.table(table_name)
+            .update({"類別": category_zh, "category": category_en})
+            .eq("id", news_id)
+            .execute()
+        )
+
+        if not response.data:
+            raise HTTPException(status_code=404, detail="找不到該新聞")
+
+        print(f"✅ 成功更新新聞 {news_id} 的分類: {category_zh} / {category_en}")
+        return {"success": True, "data": response.data[0]}
+
+    except Exception as e:
+        print(f"❌ 更新分類失敗: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"更新分類失敗: {str(e)}")
 
 
 @app.get("/api/system-prompts", response_model=List[SystemPrompt])
