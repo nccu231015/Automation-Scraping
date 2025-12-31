@@ -44,7 +44,13 @@ function App() {
 
   // 原始新聞篩選狀態
   const [newsWebsiteFilter, setNewsWebsiteFilter] = useState('all')
+  const [newsCategoryFilter, setNewsCategoryFilter] = useState('all')  // 新增分類篩選
   const [newsTitleKeyword, setNewsTitleKeyword] = useState('')
+
+  // 分類編輯狀態（用於原始新聞列表）
+  const [editingCategoryId, setEditingCategoryId] = useState<number | null>(null)
+  const [editCategoryZh, setEditCategoryZh] = useState('')
+  const [editCategoryEn, setEditCategoryEn] = useState('')
 
   // 處理後新聞列表狀態
   const [processedNewsList, setProcessedNewsList] = useState<NewsItem[]>([])
@@ -60,11 +66,6 @@ function App() {
   const [facebookPublishing, setFacebookPublishing] = useState(false)
   const [threadsPublishing, setThreadsPublishing] = useState(false)
   const [instagramPublishing, setInstagramPublishing] = useState(false)
-
-  // 分類編輯狀態
-  const [editingCategoryId, setEditingCategoryId] = useState<number | null>(null)
-  const [editCategoryZh, setEditCategoryZh] = useState('')
-  const [editCategoryEn, setEditCategoryEn] = useState('')
 
   // 多平台發布選擇
   const [selectedPlatforms, setSelectedPlatforms] = useState<{
@@ -782,7 +783,7 @@ function App() {
       })
 
       // 更新本地列表
-      setProcessedNewsList(prev =>
+      setNewsList(prev =>
         prev.map(item =>
           item.id === newsId
             ? { ...item, category_zh: editCategoryZh, category_en: editCategoryEn }
@@ -975,13 +976,37 @@ function App() {
                       </select>
                     </div>
                     <div className="form-group">
-                      <label htmlFor="news-title-filter">標題關鍵字</label>
+                      <label htmlFor="news-category-filter">篩選分類</label>
+                      <select
+                        id="news-category-filter"
+                        value={newsCategoryFilter}
+                        onChange={(e) => setNewsCategoryFilter(e.target.value)}
+                      >
+                        <option value="all">全部分類</option>
+                        {Array.from(
+                          new Set(
+                            newsList
+                              .flatMap(news => [
+                                ...(news.category_zh?.split('、') || []),
+                                ...(news.category_en?.split(', ') || [])
+                              ])
+                              .filter(Boolean)
+                          )
+                        ).sort().map((category) => (
+                          <option key={category} value={category}>
+                            {category}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="form-group">
+                      <label htmlFor="news-title-filter">標題/分類關鍵字</label>
                       <input
                         id="news-title-filter"
                         type="text"
                         value={newsTitleKeyword}
                         onChange={(e) => setNewsTitleKeyword(e.target.value)}
-                        placeholder="輸入標題關鍵字..."
+                        placeholder="搜尋標題或分類..."
                       />
                     </div>
                   </div>
@@ -992,10 +1017,22 @@ function App() {
                     <>
                       {(() => {
                         const filteredNews = newsList.filter((news) => {
+                          // 1. 網站篩選
                           const websiteMatch = newsWebsiteFilter === 'all' || news.sourceWebsite === newsWebsiteFilter
+
+                          // 2. 分類篩選
+                          const categoryMatch = newsCategoryFilter === 'all' ||
+                            news.category_zh?.includes(newsCategoryFilter) ||
+                            news.category_en?.toLowerCase().includes(newsCategoryFilter.toLowerCase())
+
+                          // 3. 標題/分類關鍵字搜尋
+                          const keyword = newsTitleKeyword.toLowerCase()
                           const titleMatch = !newsTitleKeyword ||
-                            news.title_translated?.toLowerCase().includes(newsTitleKeyword.toLowerCase())
-                          return websiteMatch && titleMatch
+                            news.title_translated?.toLowerCase().includes(keyword) ||
+                            news.category_zh?.includes(newsTitleKeyword) ||
+                            news.category_en?.toLowerCase().includes(keyword)
+
+                          return websiteMatch && categoryMatch && titleMatch
                         })
 
                         if (filteredNews.length === 0) {
@@ -1016,11 +1053,140 @@ function App() {
                                     ? news.content_translated.substring(0, 150) + '...'
                                     : '無內容'}
                                 </p>
-                                {news.sourceWebsite && (
-                                  <div style={{ fontSize: '12px', color: '#999', marginTop: '8px' }}>
-                                    來源：{news.sourceWebsite}
-                                  </div>
-                                )}
+                                {/* 分類顯示與編輯區域 */}
+                                <div style={{ marginTop: '10px' }}>
+                                  {editingCategoryId === news.id ? (
+                                    // 編輯模式
+                                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                                      <input
+                                        type="text"
+                                        value={editCategoryZh}
+                                        onChange={(e) => setEditCategoryZh(e.target.value)}
+                                        placeholder="中文分類"
+                                        onClick={(e) => e.stopPropagation()}
+                                        style={{
+                                          flex: '1 1 120px',
+                                          padding: '4px 8px',
+                                          border: '1px solid #ccc',
+                                          borderRadius: '4px',
+                                          fontSize: '12px',
+                                          minWidth: '0'
+                                        }}
+                                      />
+                                      <input
+                                        type="text"
+                                        value={editCategoryEn}
+                                        onChange={(e) => setEditCategoryEn(e.target.value)}
+                                        placeholder="Category"
+                                        onClick={(e) => e.stopPropagation()}
+                                        style={{
+                                          flex: '1 1 120px',
+                                          padding: '4px 8px',
+                                          border: '1px solid #ccc',
+                                          borderRadius: '4px',
+                                          fontSize: '12px',
+                                          minWidth: '0'
+                                        }}
+                                      />
+                                      <div style={{ display: 'flex', gap: '4px' }}>
+                                        <button
+                                          onClick={(e) => { e.stopPropagation(); handleSaveCategory(news.id); }}
+                                          style={{
+                                            padding: '4px 8px',
+                                            background: '#4caf50',
+                                            color: 'white',
+                                            border: 'none',
+                                            borderRadius: '4px',
+                                            cursor: 'pointer',
+                                            fontSize: '12px',
+                                            whiteSpace: 'nowrap'
+                                          }}
+                                        >
+                                          ✓
+                                        </button>
+                                        <button
+                                          onClick={(e) => { e.stopPropagation(); handleCancelEdit(); }}
+                                          style={{
+                                            padding: '4px 8px',
+                                            background: '#f44336',
+                                            color: 'white',
+                                            border: 'none',
+                                            borderRadius: '4px',
+                                            cursor: 'pointer',
+                                            fontSize: '12px',
+                                            whiteSpace: 'nowrap'
+                                          }}
+                                        >
+                                          ✗
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    // 顯示模式
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                                      {news.category_zh || news.category_en ? (
+                                        <>
+                                          <span style={{ color: '#666', fontSize: '12px', fontWeight: '500' }}>分類：</span>
+                                          {news.category_zh && (
+                                            <span style={{
+                                              display: 'inline-block',
+                                              padding: '2px 8px',
+                                              background: '#e3f2fd',
+                                              color: '#1976d2',
+                                              borderRadius: '10px',
+                                              fontSize: '11px',
+                                              whiteSpace: 'nowrap'
+                                            }}>
+                                              {news.category_zh}
+                                            </span>
+                                          )}
+                                          {news.category_en && (
+                                            <span style={{
+                                              display: 'inline-block',
+                                              padding: '2px 8px',
+                                              background: '#f3e5f5',
+                                              color: '#7b1fa2',
+                                              borderRadius: '10px',
+                                              fontSize: '11px',
+                                              whiteSpace: 'nowrap'
+                                            }}>
+                                              {news.category_en}
+                                            </span>
+                                          )}
+                                          <button
+                                            onClick={(e) => { e.stopPropagation(); handleEditCategory(news); }}
+                                            style={{
+                                              background: 'none',
+                                              border: 'none',
+                                              cursor: 'pointer',
+                                              fontSize: '14px',
+                                              padding: '0 4px',
+                                              lineHeight: '1'
+                                            }}
+                                            title="編輯分類"
+                                          >
+                                            🖊️
+                                          </button>
+                                        </>
+                                      ) : (
+                                        <button
+                                          onClick={(e) => { e.stopPropagation(); handleEditCategory(news); }}
+                                          style={{
+                                            padding: '4px 10px',
+                                            background: '#2196f3',
+                                            color: 'white',
+                                            border: 'none',
+                                            borderRadius: '4px',
+                                            cursor: 'pointer',
+                                            fontSize: '11px'
+                                          }}
+                                        >
+                                          + 新增分類
+                                        </button>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
                               </div>
                             ))}
                           </div>

@@ -256,8 +256,8 @@ class NewsItem(BaseModel):
     url: Optional[str] = None  # 新聞網址
     title_modified: Optional[str] = None  # AI 重寫的標題
     content_modified: Optional[str] = None  # AI 重寫的內容
-    category_zh: Optional[str] = None  # 中文分類
-    category_en: Optional[str] = None  # 英文分類
+    category_zh: Optional[str] = None  # 中文分類 (對應 DB: 類別)
+    category_en: Optional[str] = None  # 英文分類 (對應 DB: category)
 
     class Config:
         # 允許額外的欄位
@@ -393,11 +393,10 @@ async def health_check():
 async def get_news():
     """獲取符合條件的新聞（指定來源網站且 images 不為空）"""
     try:
-        # 從 Supabase 獲取資料，包含所有需要的欄位
         response = (
             supabase.table(table_name)
             .select(
-                "id, title_translated, content_translated, images, sourceWebsite, url, title_modified, content_modified"
+                "id, title_translated, content_translated, images, sourceWebsite, url, title_modified, content_modified, category_zh, category_en"
             )
             .execute()
         )
@@ -452,6 +451,8 @@ async def get_news():
                     url=item.get("url"),
                     title_modified=item.get("title_modified"),
                     content_modified=item.get("content_modified"),
+                    category_zh=item.get("category_zh"),
+                    category_en=item.get("category_en"),
                 )
                 news_list.append(news_item)
             except Exception as item_error:
@@ -477,7 +478,7 @@ async def get_news_by_id(news_id: int):
         response = (
             supabase.table(table_name)
             .select(
-                "id, title_translated, content_translated, images, sourceWebsite, url, title_modified, content_modified"
+                "id, title_translated, content_translated, images, sourceWebsite, url, title_modified, content_modified, category_zh, category_en"
             )
             .eq("id", news_id)
             .execute()
@@ -514,6 +515,8 @@ async def get_news_by_id(news_id: int):
             url=item.get("url"),
             title_modified=item.get("title_modified"),
             content_modified=item.get("content_modified"),
+            category_zh=item.get("category_zh"),
+            category_en=item.get("category_en"),
         )
     except HTTPException:
         raise
@@ -525,26 +528,26 @@ async def get_news_by_id(news_id: int):
 
 
 @app.patch("/api/news/{news_id}/category")
-async def update_news_category(news_id: int, category_zh: str, category_en: str):
+async def update_news_category(
+    news_id: int, category_zh: Optional[str] = None, category_en: Optional[str] = None
+):
     """更新新聞分類"""
     try:
-        # 更新資料庫
-        response = (
-            supabase.table(table_name)
-            .update({"類別": category_zh, "category": category_en})
-            .eq("id", news_id)
-            .execute()
-        )
+        data = {}
+        if category_zh is not None:
+            data["category_zh"] = category_zh
+        if category_en is not None:
+            data["category_en"] = category_en
 
-        if not response.data:
-            raise HTTPException(status_code=404, detail="找不到該新聞")
+        if not data:
+            return {"success": True, "message": "No changes provided"}
 
-        print(f"✅ 成功更新新聞 {news_id} 的分類: {category_zh} / {category_en}")
-        return {"success": True, "data": response.data[0]}
+        response = supabase.table("news_data").update(data).eq("id", news_id).execute()
 
+        return {"success": True, "data": response.data}
     except Exception as e:
-        print(f"❌ 更新分類失敗: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"更新分類失敗: {str(e)}")
+        print(f"Update category error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/system-prompts", response_model=List[SystemPrompt])
