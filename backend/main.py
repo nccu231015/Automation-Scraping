@@ -920,7 +920,7 @@ async def publish_to_wordpress(request: WordPressPublishRequest):
             post_data = {
                 "title": title,
                 "content": content_with_source,
-                "status": "draft",  # 設為草稿，可以改為 "publish" 直接發布
+                "status": "publish",  # 直接發布到網站
                 "format": "standard",
             }
 
