@@ -68,6 +68,10 @@ function App() {
   const [threadsPublishing, setThreadsPublishing] = useState(false)
   const [instagramPublishing, setInstagramPublishing] = useState(false)
 
+  // WordPress 帳號相關狀態
+  const [wordpressAccounts, setWordpressAccounts] = useState<Array<{ id: string, name: string, url: string }>>([])
+  const [selectedWordpressAccount, setSelectedWordpressAccount] = useState<string>('')
+
   // 多平台發布選擇
   const [selectedPlatforms, setSelectedPlatforms] = useState<{
     wordpress: boolean
@@ -93,6 +97,11 @@ function App() {
     fetchSystemPrompts()
   }, [])
 
+  // 獲取 WordPress 帳號列表
+  useEffect(() => {
+    fetchWordPressAccounts()
+  }, [])
+
   const fetchSystemPrompts = async () => {
     try {
       const response = await axios.get<SystemPrompt[]>('/api/prompts')
@@ -101,6 +110,19 @@ function App() {
       console.error('獲取 System Prompts 失敗:', err)
       // 如果 API 失敗，設為空數組
       setSystemPrompts([])
+    }
+  }
+
+  const fetchWordPressAccounts = async () => {
+    try {
+      const response = await axios.get<{ accounts: Array<{ id: string, name: string, url: string }> }>('/api/wordpress-accounts')
+      setWordpressAccounts(response.data.accounts)
+      if (response.data.accounts.length > 0) {
+        setSelectedWordpressAccount(response.data.accounts[0].id)  // 預設選擇第一個帳號
+      }
+    } catch (err) {
+      console.error('獲取 WordPress 帳號失敗:', err)
+      setWordpressAccounts([])
     }
   }
 
@@ -436,6 +458,11 @@ function App() {
       return
     }
 
+    if (!selectedWordpressAccount) {
+      alert('請選擇 WordPress 帳號')
+      return
+    }
+
     // Temporarily remove confirm dialog for debugging
     // if (!confirm(`確定要發布 ${selectedProcessedNewsIds.length} 則新聞到 WordPress 嗎？`)) {
     //   return
@@ -466,9 +493,11 @@ function App() {
       })
 
       console.log('發布新聞到 WordPress，Items:', publishItems)
+      console.log('選擇的帳號:', selectedWordpressAccount)
 
       const response = await axios.post('/api/wordpress-publish', {
-        items: publishItems
+        items: publishItems,
+        account_id: selectedWordpressAccount  // 新增：傳送選擇的帳號ID
       })
 
       const { total, success, failed, results } = response.data
@@ -1665,14 +1694,36 @@ function App() {
                             <div style={{ marginBottom: '15px', padding: '15px', backgroundColor: '#f8f9fa', borderRadius: '8px' }}>
                               <h4 style={{ margin: '0 0 10px 0', fontSize: '16px', color: '#333' }}>選擇發布平台：</h4>
                               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '15px' }}>
-                                <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
-                                  <input
-                                    type="checkbox"
-                                    checked={selectedPlatforms.wordpress}
-                                    onChange={(e) => setSelectedPlatforms({ ...selectedPlatforms, wordpress: e.target.checked })}
-                                    style={{ marginRight: '8px', cursor: 'pointer', width: '18px', height: '18px' }}
-                                  />
-                                  <span style={{ fontWeight: 500, color: '#667eea' }}>WordPress</span>
+                                <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', gap: '10px' }}>
+                                  <div style={{ display: 'flex', alignItems: 'center' }}>
+                                    <input
+                                      type="checkbox"
+                                      checked={selectedPlatforms.wordpress}
+                                      onChange={(e) => setSelectedPlatforms({ ...selectedPlatforms, wordpress: e.target.checked })}
+                                      style={{ marginRight: '8px', cursor: 'pointer', width: '18px', height: '18px' }}
+                                    />
+                                    <span style={{ fontWeight: 500, color: '#667eea' }}>WordPress</span>
+                                  </div>
+                                  {selectedPlatforms.wordpress && wordpressAccounts.length > 0 && (
+                                    <select
+                                      value={selectedWordpressAccount}
+                                      onChange={(e) => setSelectedWordpressAccount(e.target.value)}
+                                      style={{
+                                        padding: '4px 8px',
+                                        borderRadius: '4px',
+                                        border: '1px solid #ddd',
+                                        fontSize: '14px',
+                                        cursor: 'pointer'
+                                      }}
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      {wordpressAccounts.map((account) => (
+                                        <option key={account.id} value={account.id}>
+                                          {account.name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  )}
                                 </label>
 
                                 <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>

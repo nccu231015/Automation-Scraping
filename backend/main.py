@@ -14,7 +14,7 @@ from openai import OpenAI
 import requests
 import base64
 from requests_oauthlib import OAuth1
-from datetime import datetime, timedelta
+from datetime import datetime
 import time
 
 
@@ -93,18 +93,56 @@ else:
     openai_client = OpenAI(api_key=openai_api_key)
     print(f"✅ OpenAI 客戶端已初始化")
 
-# WordPress 配置初始化
-wordpress_url = os.getenv("WORDPRESS_URL")
-wordpress_username = os.getenv("WORDPRESS_USERNAME")
-wordpress_app_password = os.getenv("WORDPRESS_APP_PASSWORD")
+# WordPress 配置初始化 - 支援多個帳號
+wordpress_accounts = {}
+wordpress_configured = False
 
-if not wordpress_url or not wordpress_username or not wordpress_app_password:
-    print("⚠️ 警告: 未設定完整的 WordPress 配置，發布到 WordPress 功能將無法使用")
-    wordpress_configured = False
-else:
+# 從環境變數讀取所有 WordPress 帳號（格式: WORDPRESS_URL_1, WORDPRESS_USERNAME_1, ...）
+for i in range(1, 100):  # 最多支援 99 個帳號
+    url = os.getenv(f"WORDPRESS_URL_{i}")
+    username = os.getenv(f"WORDPRESS_USERNAME_{i}")
+    password = os.getenv(f"WORDPRESS_APP_PASSWORD_{i}")
+
+    if url and username and password:
+        account_id = f"account_{i}"
+        wordpress_accounts[account_id] = {
+            "id": account_id,
+            "name": f"{username}@{url.replace('https://', '').replace('http://', '').split('/')[0]}",
+            "url": url,
+            "username": username,
+            "password": password,
+        }
+        print(f"✅ WordPress 帳號 {i} 已載入: {wordpress_accounts[account_id]['name']}")
+    elif i == 1:
+        # 如果沒有找到第一個帳號，嘗試讀取舊格式（不帶數字）
+        url = os.getenv("WORDPRESS_URL")
+        username = os.getenv("WORDPRESS_USERNAME")
+        password = os.getenv("WORDPRESS_APP_PASSWORD")
+        if url and username and password:
+            account_id = "account_1"
+            wordpress_accounts[account_id] = {
+                "id": account_id,
+                "name": f"{username}@{url.replace('https://', '').replace('http://', '').split('/')[0]}",
+                "url": url,
+                "username": username,
+                "password": password,
+            }
+            print(
+                f"✅ WordPress 帳號（舊格式）已載入: {wordpress_accounts[account_id]['name']}"
+            )
+            break
+        else:
+            print(
+                "⚠️ 警告: 未設定完整的 WordPress 配置，發布到 WordPress 功能將無法使用"
+            )
+            break
+    else:
+        # 如果這個序號找不到，停止搜索
+        break
+
+if wordpress_accounts:
     wordpress_configured = True
-    print(f"✅ WordPress 配置已載入")
-    print(f"📍 WordPress 網站: {wordpress_url}")
+    print(f"✅ 共載入 {len(wordpress_accounts)} 個 WordPress 帳號")
 
 # PIXNET 配置初始化
 pixnet_client_key = os.getenv("PIXNET_CLIENT_KEY")
@@ -236,7 +274,6 @@ ALLOWED_SOURCE_WEBSITES = [
     "https://www.thenationalnews.com/",
     "https://www.bbc.com/news/world/middle_east",
     "https://www.bbc.com/thai",
-    "https://www.freemalaysiatoday.com/",
     "https://news.web.nhk/newsweb",
     "https://jen.jiji.com/",
     "https://en.yna.co.kr/",
@@ -297,6 +334,7 @@ class PublishItem(BaseModel):
 
 class WordPressPublishRequest(BaseModel):
     items: List[PublishItem]
+    account_id: str  # 新增：指定要使用的 WordPress 帳號 ID
 
 
 class WordPressPublishResult(BaseModel):
@@ -387,6 +425,21 @@ async def health_check():
             "error": str(e),
             "message": "Supabase 連接失敗，請檢查設定",
         }
+
+
+@app.get("/api/wordpress-accounts")
+async def get_wordpress_accounts():
+    """獲取所有可用的 WordPress 帳號"""
+    if not wordpress_configured:
+        return {"accounts": [], "message": "未設定 WordPress 帳號"}
+
+    # 返回帳號列表（不包含密碼）
+    accounts = [
+        {"id": acc["id"], "name": acc["name"], "url": acc["url"]}
+        for acc in wordpress_accounts.values()
+    ]
+
+    return {"accounts": accounts}
 
 
 @app.get("/api/news", response_model=List[NewsItem])
@@ -751,6 +804,17 @@ async def publish_to_wordpress(request: WordPressPublishRequest):
     if not request.items:
         raise HTTPException(status_code=400, detail="至少需要一則新聞")
 
+    # 獲取指定的 WordPress 帳號
+    if request.account_id not in wordpress_accounts:
+        raise HTTPException(
+            status_code=400, detail=f"找不到指定的 WordPress 帳號: {request.account_id}"
+        )
+
+    account = wordpress_accounts[request.account_id]
+    wordpress_url = account["url"]
+    wordpress_username = account["username"]
+    wordpress_app_password = account["password"]
+
     results = []
 
     # 建立 WordPress 認證 header
@@ -759,9 +823,10 @@ async def publish_to_wordpress(request: WordPressPublishRequest):
     headers = {"Authorization": f"Basic {token}", "Content-Type": "application/json"}
 
     print("\n" + "=" * 80)
-    print(f"🚀 開始發布到 WordPress")
+    print("🚀 開始發布到 WordPress")
     print(f"📊 總計：{len(request.items)} 則新聞")
     print(f"🌐 WordPress 網站: {wordpress_url}")
+    print(f"👤 使用帳號: {account['name']}")
     print("=" * 80 + "\n")
 
     # 處理每則新聞
@@ -836,7 +901,7 @@ async def publish_to_wordpress(request: WordPressPublishRequest):
                 try:
                     print(f"🖼️  正在上傳特色圖片: {image_to_use}")
                     featured_media_id = await upload_image_to_wordpress(
-                        image_to_use, headers
+                        image_to_use, wordpress_url, headers
                     )
                     if featured_media_id:
                         print(f"✅ 特色圖片上傳成功 (ID: {featured_media_id})")
@@ -1109,7 +1174,9 @@ async def publish_to_facebook(request: FacebookPublishRequest):
     }
 
 
-async def upload_image_to_wordpress(image_url: str, headers: dict) -> Optional[int]:
+async def upload_image_to_wordpress(
+    image_url: str, wordpress_url: str, headers: dict
+) -> Optional[int]:
     """上傳圖片到 WordPress 媒體庫"""
     try:
         # 下載圖片
@@ -1688,47 +1755,6 @@ async def publish_to_threads(request: ThreadsPublishRequest):
         "failed": fail_count,
         "results": results,
     }
-
-
-async def upload_image_to_wordpress_old(image_url: str, headers: dict) -> Optional[int]:
-    """上傳圖片到 WordPress 媒體庫"""
-    try:
-        # 下載圖片
-        img_response = requests.get(image_url, timeout=30)
-        if img_response.status_code != 200:
-            return None
-
-        # 從 URL 提取檔案名稱
-        filename = image_url.split("/")[-1].split("?")[0]
-        if not filename:
-            filename = "image.jpg"
-
-        # 上傳到 WordPress
-        wp_media_url = f"{wordpress_url.rstrip('/')}/wp-json/wp/v2/media"
-
-        files = {
-            "file": (
-                filename,
-                img_response.content,
-                img_response.headers.get("content-type", "image/jpeg"),
-            )
-        }
-
-        # 注意：上傳媒體時需要不同的 headers
-        upload_headers = {"Authorization": headers["Authorization"]}
-
-        upload_response = requests.post(
-            wp_media_url, headers=upload_headers, files=files, timeout=60
-        )
-
-        if upload_response.status_code in [200, 201]:
-            media_data = upload_response.json()
-            return media_data.get("id")
-
-        return None
-    except Exception as e:
-        print(f"   ⚠️  圖片上傳異常: {str(e)}")
-        return None
 
 
 @app.post("/api/pixnet-publish")
