@@ -849,6 +849,15 @@ function App() {
         )
       )
 
+      // 也更新處理後新聞列表
+      setProcessedNewsList(prev =>
+        prev.map(item =>
+          item.id === newsId
+            ? { ...item, category_zh: editCategoryZh, category_en: editCategoryEn }
+            : item
+        )
+      )
+
       setEditingCategoryId(null)
       alert('分類更新成功')
     } catch (err) {
