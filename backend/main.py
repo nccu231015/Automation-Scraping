@@ -846,7 +846,7 @@ async def publish_to_wordpress(request: WordPressPublishRequest):
             response = (
                 supabase.table(table_name)
                 .select(
-                    "id, url, title_translated, content_translated, title_modified, content_modified, images"
+                    "id, url, title_translated, content_translated, title_modified, content_modified, images, category_zh, category_en"
                 )
                 .eq("id", news_id)
                 .execute()
@@ -916,6 +916,10 @@ async def publish_to_wordpress(request: WordPressPublishRequest):
             if news_url:
                 content_with_source += f"\n\n<p><small>原始來源: <a href='{news_url}' target='_blank'>{news_url}</a></small></p>"
 
+            # 獲取分類
+            category_zh = news_item.get("category_zh", "")
+            category_en = news_item.get("category_en", "")
+
             # 準備發布到 WordPress 的資料
             post_data = {
                 "title": title,
@@ -927,6 +931,15 @@ async def publish_to_wordpress(request: WordPressPublishRequest):
             # 如果有特色圖片，加入資料
             if featured_media_id:
                 post_data["featured_media"] = featured_media_id
+
+            # 如果有分類，加入資料（使用中文分類）
+            if category_zh:
+                print(f"📁 分類: {category_zh}")
+                # 將分類添加到文章內容開頭，作為醒目的標籤
+                content_with_source = (
+                    f'<p style="background-color:#f0f0f0; padding:8px 12px; border-left:4px solid #667eea; margin-bottom:20px;"><strong>📁 分類：</strong>{category_zh}</p>\n\n'
+                    + content_with_source
+                )
 
             print(f"📤 正在發布到 WordPress...")
 
