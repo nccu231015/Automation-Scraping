@@ -1734,21 +1734,22 @@ function App() {
                             {/* 多平台選擇區 */}
                             <div style={{ marginBottom: '15px', padding: '15px', backgroundColor: '#f8f9fa', borderRadius: '8px' }}>
                               <h4 style={{ margin: '0 0 10px 0', fontSize: '16px', color: '#333' }}>選擇發布平台：</h4>
-                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '15px' }}>
-                                <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', gap: '10px' }}>
-                                  <div style={{ display: 'flex', alignItems: 'center' }}>
+                              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '20px' }}>
+                                {/* WordPress */}
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', padding: '10px', backgroundColor: '#fff', borderRadius: '6px', border: '1px solid #eee' }}>
+                                  <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
                                     <input
                                       type="checkbox"
                                       checked={selectedPlatforms.wordpress}
                                       onChange={(e) => setSelectedPlatforms({ ...selectedPlatforms, wordpress: e.target.checked })}
-                                      style={{ marginRight: '8px', cursor: 'pointer', width: '18px', height: '18px' }}
+                                      style={{ cursor: 'pointer', width: '18px', height: '18px' }}
                                     />
-                                    <span style={{ fontWeight: 500, color: '#667eea' }}>WordPress</span>
-                                  </div>
+                                    <span style={{ fontWeight: 500, color: '#667eea', marginLeft: '8px' }}>WordPress</span>
+                                  </label>
                                   {selectedPlatforms.wordpress && wordpressAccounts.length > 0 && (
-                                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', backgroundColor: '#fff', padding: '6px 10px', borderRadius: '4px', border: '1px solid #ddd' }}>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', paddingLeft: '26px' }}>
                                       {wordpressAccounts.map((account) => (
-                                        <label key={account.id} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '13px', cursor: 'pointer' }}>
+                                        <label key={account.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', cursor: 'pointer', color: '#555' }}>
                                           <input
                                             type="checkbox"
                                             checked={selectedWordpressAccounts.includes(account.id)}
@@ -1759,7 +1760,6 @@ function App() {
                                                 setSelectedWordpressAccounts(selectedWordpressAccounts.filter(a => a !== account.id))
                                               }
                                             }}
-                                            onClick={(e) => e.stopPropagation()}
                                             style={{ cursor: 'pointer', margin: 0 }}
                                           />
                                           {account.name}
@@ -1767,32 +1767,36 @@ function App() {
                                       ))}
                                     </div>
                                   )}
-                                </label>
+                                </div>
 
-                                <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
-                                  <input
-                                    type="checkbox"
-                                    checked={selectedPlatforms.pixnet}
-                                    onChange={(e) => setSelectedPlatforms({ ...selectedPlatforms, pixnet: e.target.checked })}
-                                    style={{ marginRight: '8px', cursor: 'pointer', width: '18px', height: '18px' }}
-                                  />
-                                  <span style={{ fontWeight: 500, color: '#ff6b35' }}>PIXNET</span>
-                                </label>
+                                {/* PIXNET */}
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', padding: '10px', backgroundColor: '#fff', borderRadius: '6px', border: '1px solid #eee' }}>
+                                  <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                                    <input
+                                      type="checkbox"
+                                      checked={selectedPlatforms.pixnet}
+                                      onChange={(e) => setSelectedPlatforms({ ...selectedPlatforms, pixnet: e.target.checked })}
+                                      style={{ cursor: 'pointer', width: '18px', height: '18px' }}
+                                    />
+                                    <span style={{ fontWeight: 500, color: '#ff6b35', marginLeft: '8px' }}>PIXNET</span>
+                                  </label>
+                                </div>
 
-                                <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', gap: '10px' }}>
-                                  <div style={{ display: 'flex', alignItems: 'center' }}>
+                                {/* Facebook */}
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', padding: '10px', backgroundColor: '#fff', borderRadius: '6px', border: '1px solid #eee' }}>
+                                  <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
                                     <input
                                       type="checkbox"
                                       checked={selectedPlatforms.facebook}
                                       onChange={(e) => setSelectedPlatforms({ ...selectedPlatforms, facebook: e.target.checked })}
-                                      style={{ marginRight: '8px', cursor: 'pointer', width: '18px', height: '18px' }}
+                                      style={{ cursor: 'pointer', width: '18px', height: '18px' }}
                                     />
-                                    <span style={{ fontWeight: 500, color: '#4267B2' }}>Facebook</span>
-                                  </div>
+                                    <span style={{ fontWeight: 500, color: '#4267B2', marginLeft: '8px' }}>Facebook</span>
+                                  </label>
                                   {selectedPlatforms.facebook && facebookAccounts.length > 0 && (
-                                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', backgroundColor: '#fff', padding: '6px 10px', borderRadius: '4px', border: '1px solid #ddd' }}>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', paddingLeft: '26px' }}>
                                       {facebookAccounts.map((account) => (
-                                        <label key={account.id} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '13px', cursor: 'pointer' }}>
+                                        <label key={account.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', cursor: 'pointer', color: '#555' }}>
                                           <input
                                             type="checkbox"
                                             checked={selectedFacebookAccounts.includes(account.id)}
@@ -1803,7 +1807,6 @@ function App() {
                                                 setSelectedFacebookAccounts(selectedFacebookAccounts.filter(a => a !== account.id))
                                               }
                                             }}
-                                            onClick={(e) => e.stopPropagation()}
                                             style={{ cursor: 'pointer', margin: 0 }}
                                           />
                                           {account.name}
@@ -1811,27 +1814,33 @@ function App() {
                                       ))}
                                     </div>
                                   )}
-                                </label>
+                                </div>
 
-                                <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
-                                  <input
-                                    type="checkbox"
-                                    checked={selectedPlatforms.threads}
-                                    onChange={(e) => setSelectedPlatforms({ ...selectedPlatforms, threads: e.target.checked })}
-                                    style={{ marginRight: '8px', cursor: 'pointer', width: '18px', height: '18px' }}
-                                  />
-                                  <span style={{ fontWeight: 500, color: '#000000' }}>Threads</span>
-                                </label>
+                                {/* Threads */}
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', padding: '10px', backgroundColor: '#fff', borderRadius: '6px', border: '1px solid #eee' }}>
+                                  <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                                    <input
+                                      type="checkbox"
+                                      checked={selectedPlatforms.threads}
+                                      onChange={(e) => setSelectedPlatforms({ ...selectedPlatforms, threads: e.target.checked })}
+                                      style={{ cursor: 'pointer', width: '18px', height: '18px' }}
+                                    />
+                                    <span style={{ fontWeight: 500, color: '#000000', marginLeft: '8px' }}>Threads</span>
+                                  </label>
+                                </div>
 
-                                <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
-                                  <input
-                                    type="checkbox"
-                                    checked={selectedPlatforms.instagram}
-                                    onChange={(e) => setSelectedPlatforms({ ...selectedPlatforms, instagram: e.target.checked })}
-                                    style={{ marginRight: '8px', cursor: 'pointer', width: '18px', height: '18px' }}
-                                  />
-                                  <span style={{ fontWeight: 500, color: '#E4405F' }}>Instagram</span>
-                                </label>
+                                {/* Instagram */}
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', padding: '10px', backgroundColor: '#fff', borderRadius: '6px', border: '1px solid #eee' }}>
+                                  <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                                    <input
+                                      type="checkbox"
+                                      checked={selectedPlatforms.instagram}
+                                      onChange={(e) => setSelectedPlatforms({ ...selectedPlatforms, instagram: e.target.checked })}
+                                      style={{ cursor: 'pointer', width: '18px', height: '18px' }}
+                                    />
+                                    <span style={{ fontWeight: 500, color: '#E4405F', marginLeft: '8px' }}>Instagram</span>
+                                  </label>
+                                </div>
                               </div>
                             </div>
 
