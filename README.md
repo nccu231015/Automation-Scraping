@@ -14,12 +14,12 @@ A full-stack news management and AI rewriting system that allows you to process 
   - **Advanced Search**: Filter news by category and search across titles and categories
 - **🖼️ Image Selection**: Select specific images for each news item before publishing
 - **📤 Multi-Platform Publishing**: 
-  - **WordPress**: Batch publish with custom featured images
+  - **WordPress**: Multi-account support, direct publishing (live), and automatic category display
   - **PIXNET**: Publish to PIXNET blog platform
-  - **Facebook**: Post to Facebook Pages with automatic token management
+  - **Facebook**: Multi-account support, post to multiple Facebook Pages with permanent tokens
   - **Threads**: Publish to Threads with automatic token refresh (60-day auto-renewal)
   - **Instagram**: Publish to Instagram with automatic token refresh (60-day auto-renewal)
-  - **Multi-Platform Mode**: Select multiple platforms and publish to all at once
+  - **Multi-Platform Mode**: Select multiple platforms and specific accounts for combined publishing
 - **Multi-selection**: Select multiple news articles and system prompts for batch processing
 - **Preview Modal**: Preview news content before processing
 - **Filtering**: Filter by website source and title keywords across all tabs
@@ -56,10 +56,14 @@ SUPABASE_TABLE_NAME=news_data
 # OpenAI 設定
 OPENAI_API_KEY=your_openai_api_key
 
-# WordPress 設定（選填，用於發布功能）
-WORDPRESS_URL=https://your-wordpress-site.com
-WORDPRESS_USERNAME=your_username
-WORDPRESS_APP_PASSWORD=your_app_password
+# WordPress 設定 (多帳號支援)
+WORDPRESS_URL_1=https://site1.com
+WORDPRESS_USERNAME_1=user1
+WORDPRESS_APP_PASSWORD_1=abcd efgh ijkl mnop
+
+WORDPRESS_URL_2=https://site2.com
+WORDPRESS_USERNAME_2=user2
+WORDPRESS_APP_PASSWORD_2=qrst uvwx yzab cdef
 
 # PIXNET 設定（選填）
 PIXNET_CLIENT_KEY=your_pixnet_client_key
@@ -67,8 +71,14 @@ PIXNET_CLIENT_SECRET=your_pixnet_client_secret
 PIXNET_ACCESS_TOKEN=your_pixnet_access_token
 PIXNET_ACCESS_TOKEN_SECRET=your_pixnet_access_token_secret
 
-# Facebook 設定（選填）
-FACEBOOK_PAGE_ACCESS_TOKEN=your_facebook_page_access_token
+# Facebook 設定 (多帳號/粉絲團支援)
+FACEBOOK_PAGE_NAME_1=FanPage_A
+FACEBOOK_PAGE_ID_1=123456789
+FACEBOOK_PAGE_TOKEN_1=EAAXm...
+
+FACEBOOK_PAGE_NAME_2=FanPage_B
+FACEBOOK_PAGE_ID_2=987654321
+FACEBOOK_PAGE_TOKEN_2=EAAXn...
 
 # Threads 設定（選填）
 THREADS_USER_ID=your_threads_user_id
@@ -328,17 +338,20 @@ If you need to use different prompts for different news articles:
 2. Optionally select specific images for each article
 3. Click \"發布到 WordPress\" button
 4. The system will:
-   - Upload selected image (or first image) as featured image
-   - Use AI-rewritten content (or original if not rewritten)
-   - Add source link at the end of the article
-   - Publish as draft by default
-5. Check the results and WordPress post URLs
+  - Upload selected image (or first image) as featured image
+  - Use AI-rewritten content (or original if not rewritten)
+  - **New**: Prepend news category (if available) with styling to the content
+  - Add source link at the end of the article
+  - **New**: Published as **Live** status by default (directly visible)
+5. Select the specific WordPress account from the dropdown menu
+6. Check the results and WordPress post URLs
 
 #### 3. Publishing to Facebook
 1. Select news articles and images
-2. Click \"發布到 Facebook\" button
-3. Posts will include title, content, source link, and selected image
-4. Published directly to your Facebook Page
+2. Select the specific Facebook Page from the dropdown menu
+3. Click \"發佈到 Facebook\" button
+4. Posts will include title, content, source link, and selected image
+5. Published directly to your Facebook Page
 
 #### 4. Publishing to Threads
 1. Select news articles and images
@@ -352,8 +365,10 @@ If you need to use different prompts for different news articles:
 ### Platform-Specific Notes
 
 **WordPress:**
+- **Multi-account support**: Select from multiple configured websites
 - Supports custom featured images
-- Published as drafts by default
+- **Published as Live status** by default
+- **Automatic category display**: Categories are styled and placed at the top of the content
 - Includes full content and source links
 
 **PIXNET:**
@@ -376,8 +391,10 @@ If you need to use different prompts for different news articles:
 
 - `GET /api/news` - Fetch news from Supabase
 - `POST /api/ai-rewrite` - Process news with AI
+- `GET /api/wordpress-accounts` - Fetch configured WordPress accounts
 - `POST /api/wordpress-publish` - Publish to WordPress
 - `POST /api/pixnet-publish` - Publish to PIXNET
+- `GET /api/facebook-accounts` - Fetch configured Facebook/Meta accounts
 - `POST /api/facebook-publish` - Publish to Facebook
 - `POST /api/threads-publish` - Publish to Threads
 - `POST /api/instagram-publish` - Publish to Instagram
