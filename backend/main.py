@@ -164,15 +164,42 @@ else:
     pixnet_configured = True
     print(f"✅ PIXNET 配置已載入")
 
-# Facebook 配置初始化
-facebook_page_access_token = os.getenv("FACEBOOK_PAGE_ACCESS_TOKEN")
+# Facebook 配置初始化 (支持多帳號/多粉絲團)
+facebook_accounts = {}
+facebook_configured = False
 
-if not facebook_page_access_token:
-    print("⚠️ 警告: 未設定 FACEBOOK_PAGE_ACCESS_TOKEN，發布到 Facebook 功能將無法使用")
-    facebook_configured = False
-else:
+# 檢查是否有傳統的單一帳號配置
+legacy_fb_token = os.getenv("FACEBOOK_PAGE_ACCESS_TOKEN")
+if legacy_fb_token:
+    facebook_accounts["default"] = {
+        "id": "default",
+        "name": "預設粉絲專頁",
+        "token": legacy_fb_token,
+    }
     facebook_configured = True
-    print("✅ Facebook 配置已載入")
+
+# 讀取多個 Facebook 帳號配置 (格式: FACEBOOK_PAGE_NAME_1, FACEBOOK_PAGE_TOKEN_1, FACEBOOK_PAGE_ID_1 ...)
+for i in range(1, 11):  # 支援最多 10 個粉絲團
+    page_name = os.getenv(f"FACEBOOK_PAGE_NAME_{i}")
+    page_token = os.getenv(f"FACEBOOK_PAGE_TOKEN_{i}")
+    page_id = os.getenv(f"FACEBOOK_PAGE_ID_{i}")
+
+    if page_token:
+        account_id = f"fb_account_{i}"
+        facebook_accounts[account_id] = {
+            "id": account_id,
+            "name": page_name or f"Facebook 粉絲團 {i} ({page_id or '未知 ID'})",
+            "token": page_token,
+            "page_id": page_id,
+        }
+        facebook_configured = True
+
+if not facebook_configured:
+    print("⚠️ 警告: 未設定任何 Facebook 粉絲專頁，發布到 Facebook 功能將無法使用")
+else:
+    print(f"✅ Facebook 配置已載入 ({len(facebook_accounts)} 個粉絲團)")
+    for acc_id, acc in facebook_accounts.items():
+        print(f"   📍 {acc['name']}")
 
 # Threads 配置初始化
 threads_user_id = os.getenv("THREADS_USER_ID")
@@ -362,6 +389,7 @@ class PixnetPublishResult(BaseModel):
 
 class FacebookPublishRequest(BaseModel):
     items: List[PublishItem]
+    account_id: str  # 新增：指定要使用的 Facebook 帳號 ID
 
 
 class FacebookPublishResult(BaseModel):
@@ -437,6 +465,20 @@ async def get_wordpress_accounts():
     accounts = [
         {"id": acc["id"], "name": acc["name"], "url": acc["url"]}
         for acc in wordpress_accounts.values()
+    ]
+
+    return {"accounts": accounts}
+
+
+@app.get("/api/facebook-accounts")
+async def get_facebook_accounts():
+    """獲取所有可用的 Facebook 粉絲專頁"""
+    if not facebook_configured:
+        return {"accounts": [], "message": "未設定 Facebook 粉絲專頁"}
+
+    # 僅返回名稱和 ID (隱藏 Token)
+    accounts = [
+        {"id": acc["id"], "name": acc["name"]} for acc in facebook_accounts.values()
     ]
 
     return {"accounts": accounts}
@@ -1030,6 +1072,15 @@ async def publish_to_facebook(request: FacebookPublishRequest):
     print(f"📊 總計：{len(request.items)} 則新聞")
     print("=" * 80 + "\n")
 
+    # 獲取指定的 Facebook 帳號
+    if request.account_id not in facebook_accounts:
+        raise HTTPException(
+            status_code=400, detail=f"找不到指定的 Facebook 帳號: {request.account_id}"
+        )
+
+    account = facebook_accounts[request.account_id]
+    current_page_token = account["token"]
+
     # 處理每則新聞
     for idx, item_data in enumerate(request.items, 1):
         news_id = item_data.news_id
@@ -1039,6 +1090,7 @@ async def publish_to_facebook(request: FacebookPublishRequest):
             print(f"\n{'─' * 80}")
             print(f"📰 處理第 {idx}/{len(request.items)} 則新聞")
             print(f"🆔 新聞 ID: {news_id}")
+            print(f"👥 使用粉絲團: {account['name']}")
             if selected_image:
                 print(f"🖼️  指定圖片: {selected_image}")
 
@@ -1114,7 +1166,7 @@ async def publish_to_facebook(request: FacebookPublishRequest):
             fb_params = {
                 "url": image_to_use,
                 "caption": caption,
-                "access_token": facebook_page_access_token,
+                "access_token": current_page_token,
             }
 
             fb_response = requests.post(fb_api_url, params=fb_params, timeout=30)

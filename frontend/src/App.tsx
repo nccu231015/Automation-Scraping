@@ -72,6 +72,10 @@ function App() {
   const [wordpressAccounts, setWordpressAccounts] = useState<Array<{ id: string, name: string, url: string }>>([])
   const [selectedWordpressAccount, setSelectedWordpressAccount] = useState<string>('')
 
+  // Facebook 帳號相關狀態
+  const [facebookAccounts, setFacebookAccounts] = useState<Array<{ id: string, name: string }>>([])
+  const [selectedFacebookAccount, setSelectedFacebookAccount] = useState<string>('')
+
   // 多平台發布選擇
   const [selectedPlatforms, setSelectedPlatforms] = useState<{
     wordpress: boolean
@@ -102,6 +106,16 @@ function App() {
     fetchWordPressAccounts()
   }, [])
 
+  // 獲取 Facebook 帳號列表
+  useEffect(() => {
+    fetchFacebookAccounts()
+  }, [])
+
+  // 獲取 Facebook 帳號列表
+  useEffect(() => {
+    fetchFacebookAccounts()
+  }, [])
+
   const fetchSystemPrompts = async () => {
     try {
       const response = await axios.get<SystemPrompt[]>('/api/prompts')
@@ -123,6 +137,19 @@ function App() {
     } catch (err) {
       console.error('獲取 WordPress 帳號失敗:', err)
       setWordpressAccounts([])
+    }
+  }
+
+  const fetchFacebookAccounts = async () => {
+    try {
+      const response = await axios.get<{ accounts: Array<{ id: string, name: string }> }>('/api/facebook-accounts')
+      setFacebookAccounts(response.data.accounts)
+      if (response.data.accounts.length > 0) {
+        setSelectedFacebookAccount(response.data.accounts[0].id)
+      }
+    } catch (err) {
+      console.error('獲取 Facebook 帳號失敗:', err)
+      setFacebookAccounts([])
     }
   }
 
@@ -632,7 +659,8 @@ function App() {
       console.log('發布新聞到 Facebook，Items:', publishItems)
 
       const response = await axios.post('/api/facebook-publish', {
-        items: publishItems
+        items: publishItems,
+        account_id: selectedFacebookAccount // 指定要使用的 Facebook 帳號 ID
       })
 
       const { total, success, failed, results } = response.data
@@ -1745,14 +1773,36 @@ function App() {
                                   <span style={{ fontWeight: 500, color: '#ff6b35' }}>PIXNET</span>
                                 </label>
 
-                                <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
-                                  <input
-                                    type="checkbox"
-                                    checked={selectedPlatforms.facebook}
-                                    onChange={(e) => setSelectedPlatforms({ ...selectedPlatforms, facebook: e.target.checked })}
-                                    style={{ marginRight: '8px', cursor: 'pointer', width: '18px', height: '18px' }}
-                                  />
-                                  <span style={{ fontWeight: 500, color: '#4267B2' }}>Facebook</span>
+                                <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', gap: '10px' }}>
+                                  <div style={{ display: 'flex', alignItems: 'center' }}>
+                                    <input
+                                      type="checkbox"
+                                      checked={selectedPlatforms.facebook}
+                                      onChange={(e) => setSelectedPlatforms({ ...selectedPlatforms, facebook: e.target.checked })}
+                                      style={{ marginRight: '8px', cursor: 'pointer', width: '18px', height: '18px' }}
+                                    />
+                                    <span style={{ fontWeight: 500, color: '#4267B2' }}>Facebook</span>
+                                  </div>
+                                  {selectedPlatforms.facebook && facebookAccounts.length > 0 && (
+                                    <select
+                                      value={selectedFacebookAccount}
+                                      onChange={(e) => setSelectedFacebookAccount(e.target.value)}
+                                      style={{
+                                        padding: '4px 8px',
+                                        borderRadius: '4px',
+                                        border: '1px solid #ddd',
+                                        fontSize: '14px',
+                                        cursor: 'pointer'
+                                      }}
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      {facebookAccounts.map((account) => (
+                                        <option key={account.id} value={account.id}>
+                                          {account.name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  )}
                                 </label>
 
                                 <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
