@@ -70,11 +70,11 @@ function App() {
 
   // WordPress 帳號相關狀態
   const [wordpressAccounts, setWordpressAccounts] = useState<Array<{ id: string, name: string, url: string }>>([])
-  const [selectedWordpressAccount, setSelectedWordpressAccount] = useState<string>('')
+  const [selectedWordpressAccounts, setSelectedWordpressAccounts] = useState<string[]>([])
 
   // Facebook 帳號相關狀態
   const [facebookAccounts, setFacebookAccounts] = useState<Array<{ id: string, name: string }>>([])
-  const [selectedFacebookAccount, setSelectedFacebookAccount] = useState<string>('')
+  const [selectedFacebookAccounts, setSelectedFacebookAccounts] = useState<string[]>([])
 
   // 多平台發布選擇
   const [selectedPlatforms, setSelectedPlatforms] = useState<{
@@ -132,7 +132,7 @@ function App() {
       const response = await axios.get<{ accounts: Array<{ id: string, name: string, url: string }> }>('/api/wordpress-accounts')
       setWordpressAccounts(response.data.accounts)
       if (response.data.accounts.length > 0) {
-        setSelectedWordpressAccount(response.data.accounts[0].id)  // 預設選擇第一個帳號
+        setSelectedWordpressAccounts([response.data.accounts[0].id])  // 預設選擇第一個帳號
       }
     } catch (err) {
       console.error('獲取 WordPress 帳號失敗:', err)
@@ -145,7 +145,7 @@ function App() {
       const response = await axios.get<{ accounts: Array<{ id: string, name: string }> }>('/api/facebook-accounts')
       setFacebookAccounts(response.data.accounts)
       if (response.data.accounts.length > 0) {
-        setSelectedFacebookAccount(response.data.accounts[0].id)
+        setSelectedFacebookAccounts([response.data.accounts[0].id])
       }
     } catch (err) {
       console.error('獲取 Facebook 帳號失敗:', err)
@@ -485,8 +485,8 @@ function App() {
       return
     }
 
-    if (!selectedWordpressAccount) {
-      alert('請選擇 WordPress 帳號')
+    if (selectedWordpressAccounts.length === 0) {
+      alert('請至少選擇一個 WordPress 帳號')
       return
     }
 
@@ -520,11 +520,11 @@ function App() {
       })
 
       console.log('發布新聞到 WordPress，Items:', publishItems)
-      console.log('選擇的帳號:', selectedWordpressAccount)
+      console.log('選擇的帳號:', selectedWordpressAccounts)
 
       const response = await axios.post('/api/wordpress-publish', {
         items: publishItems,
-        account_id: selectedWordpressAccount  // 新增：傳送選擇的帳號ID
+        account_ids: selectedWordpressAccounts  // 新增：傳送選擇的多個帳號ID
       })
 
       const { total, success, failed, results } = response.data
@@ -536,7 +536,7 @@ function App() {
         resultMessage += '成功發布的新聞：\n'
         results.forEach((result: any) => {
           if (result.success) {
-            resultMessage += `- ID ${result.news_id}: ${result.wordpress_post_url}\n`
+            resultMessage += `- [${result.account_name || 'WordPress'}] ID ${result.news_id}: ${result.wordpress_post_url}\n`
           }
         })
       }
@@ -631,6 +631,10 @@ function App() {
       alert('請至少選擇一則新聞')
       return
     }
+    if (selectedFacebookAccounts.length === 0) {
+      alert('請至少選擇一個 Facebook 粉絲團')
+      return
+    }
 
     setFacebookPublishing(true)
     setError(null)
@@ -660,7 +664,7 @@ function App() {
 
       const response = await axios.post('/api/facebook-publish', {
         items: publishItems,
-        account_id: selectedFacebookAccount // 指定要使用的 Facebook 帳號 ID
+        account_ids: selectedFacebookAccounts // 指定要使用的 Facebook 帳號 ID 陣列
       })
 
       const { total, success, failed, results } = response.data
@@ -672,7 +676,7 @@ function App() {
         resultMessage += '成功發布的新聞：\n'
         results.forEach((result: any) => {
           if (result.success) {
-            resultMessage += `- ID ${result.news_id}: ${result.facebook_post_url || '(已發布)'}\n`
+            resultMessage += `- [${result.account_name || 'Facebook'}] ID ${result.news_id}: ${result.facebook_post_url || '(已發布)'}\n`
           }
         })
       }
@@ -1742,24 +1746,26 @@ function App() {
                                     <span style={{ fontWeight: 500, color: '#667eea' }}>WordPress</span>
                                   </div>
                                   {selectedPlatforms.wordpress && wordpressAccounts.length > 0 && (
-                                    <select
-                                      value={selectedWordpressAccount}
-                                      onChange={(e) => setSelectedWordpressAccount(e.target.value)}
-                                      style={{
-                                        padding: '4px 8px',
-                                        borderRadius: '4px',
-                                        border: '1px solid #ddd',
-                                        fontSize: '14px',
-                                        cursor: 'pointer'
-                                      }}
-                                      onClick={(e) => e.stopPropagation()}
-                                    >
+                                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', backgroundColor: '#fff', padding: '6px 10px', borderRadius: '4px', border: '1px solid #ddd' }}>
                                       {wordpressAccounts.map((account) => (
-                                        <option key={account.id} value={account.id}>
+                                        <label key={account.id} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '13px', cursor: 'pointer' }}>
+                                          <input
+                                            type="checkbox"
+                                            checked={selectedWordpressAccounts.includes(account.id)}
+                                            onChange={(e) => {
+                                              if (e.target.checked) {
+                                                setSelectedWordpressAccounts([...selectedWordpressAccounts, account.id])
+                                              } else {
+                                                setSelectedWordpressAccounts(selectedWordpressAccounts.filter(a => a !== account.id))
+                                              }
+                                            }}
+                                            onClick={(e) => e.stopPropagation()}
+                                            style={{ cursor: 'pointer', margin: 0 }}
+                                          />
                                           {account.name}
-                                        </option>
+                                        </label>
                                       ))}
-                                    </select>
+                                    </div>
                                   )}
                                 </label>
 
@@ -1784,24 +1790,26 @@ function App() {
                                     <span style={{ fontWeight: 500, color: '#4267B2' }}>Facebook</span>
                                   </div>
                                   {selectedPlatforms.facebook && facebookAccounts.length > 0 && (
-                                    <select
-                                      value={selectedFacebookAccount}
-                                      onChange={(e) => setSelectedFacebookAccount(e.target.value)}
-                                      style={{
-                                        padding: '4px 8px',
-                                        borderRadius: '4px',
-                                        border: '1px solid #ddd',
-                                        fontSize: '14px',
-                                        cursor: 'pointer'
-                                      }}
-                                      onClick={(e) => e.stopPropagation()}
-                                    >
+                                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', backgroundColor: '#fff', padding: '6px 10px', borderRadius: '4px', border: '1px solid #ddd' }}>
                                       {facebookAccounts.map((account) => (
-                                        <option key={account.id} value={account.id}>
+                                        <label key={account.id} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '13px', cursor: 'pointer' }}>
+                                          <input
+                                            type="checkbox"
+                                            checked={selectedFacebookAccounts.includes(account.id)}
+                                            onChange={(e) => {
+                                              if (e.target.checked) {
+                                                setSelectedFacebookAccounts([...selectedFacebookAccounts, account.id])
+                                              } else {
+                                                setSelectedFacebookAccounts(selectedFacebookAccounts.filter(a => a !== account.id))
+                                              }
+                                            }}
+                                            onClick={(e) => e.stopPropagation()}
+                                            style={{ cursor: 'pointer', margin: 0 }}
+                                          />
                                           {account.name}
-                                        </option>
+                                        </label>
                                       ))}
-                                    </select>
+                                    </div>
                                   )}
                                 </label>
 

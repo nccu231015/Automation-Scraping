@@ -361,12 +361,13 @@ class PublishItem(BaseModel):
 
 class WordPressPublishRequest(BaseModel):
     items: List[PublishItem]
-    account_id: str  # 新增：指定要使用的 WordPress 帳號 ID
+    account_ids: List[str]  # 更新：支援多帳號發布
 
 
 class WordPressPublishResult(BaseModel):
     news_id: int
     news_url: str
+    account_name: Optional[str] = None
     wordpress_post_id: Optional[int] = None
     wordpress_post_url: Optional[str] = None
     success: bool
@@ -389,12 +390,13 @@ class PixnetPublishResult(BaseModel):
 
 class FacebookPublishRequest(BaseModel):
     items: List[PublishItem]
-    account_id: str  # 新增：指定要使用的 Facebook 帳號 ID
+    account_ids: List[str]  # 更新：支援多帳號發布
 
 
 class FacebookPublishResult(BaseModel):
     news_id: int
     news_url: str
+    account_name: Optional[str] = None
     facebook_post_id: Optional[str] = None
     facebook_post_url: Optional[str] = None
     success: bool
@@ -847,39 +849,41 @@ async def publish_to_wordpress(request: WordPressPublishRequest):
         raise HTTPException(status_code=400, detail="至少需要一則新聞")
 
     # 獲取指定的 WordPress 帳號
-    if request.account_id not in wordpress_accounts:
-        raise HTTPException(
-            status_code=400, detail=f"找不到指定的 WordPress 帳號: {request.account_id}"
-        )
+    if not getattr(request, 'account_ids', None):
+        raise HTTPException(status_code=400, detail="請選擇至少一個 WordPress 帳號")
 
-    account = wordpress_accounts[request.account_id]
-    wordpress_url = account["url"]
-    wordpress_username = account["username"]
-    wordpress_app_password = account["password"]
+    valid_accounts = [wordpress_accounts[acc] for acc in request.account_ids if acc in wordpress_accounts]
+    if not valid_accounts:
+        raise HTTPException(status_code=400, detail="找不到指定的任何 WordPress 帳號")
 
     results = []
 
-    # 建立 WordPress 認證 header
-    credentials = f"{wordpress_username}:{wordpress_app_password}"
-    token = base64.b64encode(credentials.encode()).decode()
-    headers = {"Authorization": f"Basic {token}", "Content-Type": "application/json"}
-
     print("\n" + "=" * 80)
     print("🚀 開始發布到 WordPress")
-    print(f"📊 總計：{len(request.items)} 則新聞")
-    print(f"🌐 WordPress 網站: {wordpress_url}")
-    print(f"👤 使用帳號: {account['name']}")
+    print(f"📊 總計：{len(request.items)} 則新聞，{len(valid_accounts)} 個帳號")
     print("=" * 80 + "\n")
 
-    # 處理每則新聞
-    for idx, item_data in enumerate(request.items, 1):
+    # 組合所有發布任務
+    tasks = [(acc, item) for acc in valid_accounts for item in request.items]
+
+    # 處理每個發布任務
+    for idx, (account, item_data) in enumerate(tasks, 1):
+        wordpress_url = account["url"]
+        wordpress_username = account["username"]
+        wordpress_app_password = account["password"]
+
+        # 建立 WordPress 認證 header
+        credentials = f"{wordpress_username}:{wordpress_app_password}"
+        token = base64.b64encode(credentials.encode()).decode()
+        headers = {"Authorization": f"Basic {token}", "Content-Type": "application/json"}
+
         news_id = item_data.news_id
         selected_image = item_data.selected_image
 
         try:
             print(f"\n{'─' * 80}")
-            print(f"📰 處理第 {idx}/{len(request.items)} 則新聞")
-            print(f"🆔 新聞 ID: {news_id}")
+            print(f"📰 處理任務 {idx}/{len(tasks)} | 新聞 ID: {news_id}")
+            print(f"� 目標網站: {wordpress_url} ({account['name']})")
             if selected_image:
                 print(f"🖼️  指定圖片: {selected_image}")
 
@@ -1005,6 +1009,7 @@ async def publish_to_wordpress(request: WordPressPublishRequest):
                     WordPressPublishResult(
                         news_id=news_id,
                         news_url=news_url,
+                        account_name=account['name'],
                         wordpress_post_id=wp_post_id,
                         wordpress_post_url=wp_post_url,
                         success=True,
@@ -1028,6 +1033,7 @@ async def publish_to_wordpress(request: WordPressPublishRequest):
                     news_url=news_item.get("url", "")
                     if "news_item" in locals()
                     else "",
+                    account_name=account['name'],
                     wordpress_post_id=None,
                     wordpress_post_url=None,
                     success=False,
@@ -1067,30 +1073,34 @@ async def publish_to_facebook(request: FacebookPublishRequest):
 
     results = []
 
-    print("\n" + "=" * 80)
-    print("🚀 開始發布到 Facebook 粉絲專頁")
-    print(f"📊 總計：{len(request.items)} 則新聞")
-    print("=" * 80 + "\n")
-
     # 獲取指定的 Facebook 帳號
-    if request.account_id not in facebook_accounts:
+    if getattr(request, 'account_ids', None) is None:
         raise HTTPException(
-            status_code=400, detail=f"找不到指定的 Facebook 帳號: {request.account_id}"
+            status_code=400, detail="請選擇至少一個 Facebook 帳號"
         )
 
-    account = facebook_accounts[request.account_id]
-    current_page_token = account["token"]
+    valid_accounts = [facebook_accounts[acc] for acc in request.account_ids if acc in facebook_accounts]
+    if not valid_accounts:
+        raise HTTPException(status_code=400, detail="找不到任何有效的 Facebook 帳號")
 
-    # 處理每則新聞
-    for idx, item_data in enumerate(request.items, 1):
+    print("\n" + "=" * 80)
+    print("🚀 開始發布到 Facebook 粉絲專頁")
+    print(f"📊 總計：{len(request.items)} 則新聞，{len(valid_accounts)} 個粉絲團")
+    print("=" * 80 + "\n")
+
+    # 組合所有發布任務
+    tasks = [(acc, item) for acc in valid_accounts for item in request.items]
+
+    # 處理每個發布任務
+    for idx, (account, item_data) in enumerate(tasks, 1):
+        current_page_token = account["token"]
         news_id = item_data.news_id
         selected_image = item_data.selected_image
 
         try:
             print(f"\n{'─' * 80}")
-            print(f"📰 處理第 {idx}/{len(request.items)} 則新聞")
-            print(f"🆔 新聞 ID: {news_id}")
-            print(f"👥 使用粉絲團: {account['name']}")
+            print(f"📰 處理任務 {idx}/{len(tasks)} | 新聞 ID: {news_id}")
+            print(f"👥 目標粉絲團: {account['name']}")
             if selected_image:
                 print(f"🖼️  指定圖片: {selected_image}")
 
@@ -1191,6 +1201,7 @@ async def publish_to_facebook(request: FacebookPublishRequest):
                     FacebookPublishResult(
                         news_id=news_id,
                         news_url=news_url,
+                        account_name=account['name'],
                         facebook_post_id=fb_post_id,
                         facebook_post_url=fb_post_url,
                         success=True,
@@ -1214,6 +1225,7 @@ async def publish_to_facebook(request: FacebookPublishRequest):
                     news_url=news_item.get("url", "")
                     if "news_item" in locals()
                     else "",
+                    account_name=account['name'],
                     facebook_post_id=None,
                     facebook_post_url=None,
                     success=False,
