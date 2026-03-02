@@ -558,9 +558,10 @@ function App() {
 
     } catch (err: any) {
       console.error('發布到 WordPress 失敗:', err)
-      const errorMsg = err.response?.data?.detail || err.message || '未知錯誤'
+      const detail = err.response?.data?.detail
+      const errorMsg = (typeof detail === 'string' ? detail : detail ? JSON.stringify(detail) : null) || err.message || '未知錯誤'
       setError(`發布到 WordPress 失敗: ${errorMsg}`)
-      alert(`發布失敗：${errorMsg}`)
+      throw new Error(errorMsg)
     } finally {
       setWordpressPublishing(false)
     }
@@ -618,9 +619,10 @@ function App() {
 
     } catch (err: any) {
       console.error('發布到 PIXNET 失敗:', err)
-      const errorMsg = err.response?.data?.detail || err.message || '未知錯誤'
+      const detail = err.response?.data?.detail
+      const errorMsg = (typeof detail === 'string' ? detail : detail ? JSON.stringify(detail) : null) || err.message || '未知錯誤'
       setError(`發布到 PIXNET 失敗: ${errorMsg}`)
-      alert(`發布失敗：${errorMsg}`)
+      throw new Error(errorMsg)
     } finally {
       setPixnetPublishing(false)
     }
@@ -698,9 +700,10 @@ function App() {
 
     } catch (err: any) {
       console.error('發布到 Facebook 失敗:', err)
-      const errorMsg = err.response?.data?.detail || err.message || '未知錯誤'
+      const detail = err.response?.data?.detail
+      const errorMsg = (typeof detail === 'string' ? detail : detail ? JSON.stringify(detail) : null) || err.message || '未知錯誤'
       setError(`發布到 Facebook 失敗: ${errorMsg}`)
-      alert(`發布失敗：${errorMsg}`)
+      throw new Error(errorMsg)
     } finally {
       setFacebookPublishing(false)
     }
