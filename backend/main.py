@@ -1207,11 +1207,37 @@ async def publish_to_facebook(request: FacebookPublishRequest):
             print(f"🖼️  圖片 URL: {image_to_use}")
 
             page_id = account["id"]
+
+            # 嘗試用 User Token 換取 Page Access Token（確保使用正確的 Token 類型）
+            page_token_to_use = current_page_token
+            try:
+                page_token_resp = requests.get(
+                    f"https://graph.facebook.com/v24.0/{page_id}",
+                    params={
+                        "fields": "access_token",
+                        "access_token": current_page_token,
+                    },
+                    timeout=10,
+                )
+                if page_token_resp.status_code == 200:
+                    pt = page_token_resp.json().get("access_token")
+                    if pt:
+                        page_token_to_use = pt
+                        print(f"✅ 已取得 Page Access Token")
+                    else:
+                        print(f"⚠️ 無法取得 Page Token，使用原始 Token")
+                else:
+                    print(
+                        f"⚠️ 取得 Page Token 失敗 ({page_token_resp.status_code})，使用原始 Token"
+                    )
+            except Exception as e:
+                print(f"⚠️ 取得 Page Token 例外: {e}，使用原始 Token")
+
             fb_api_url = f"https://graph.facebook.com/v24.0/{page_id}/photos"
             fb_params = {
                 "url": image_to_use,
                 "caption": caption,
-                "access_token": current_page_token,
+                "access_token": page_token_to_use,
             }
 
             fb_response = requests.post(fb_api_url, params=fb_params, timeout=30)
@@ -1519,18 +1545,16 @@ async def publish_to_instagram(request: InstagramPublishRequest):
             print(f"🔑 Access Token 長度: {len(current_token)}")
             print(f"📍 Instagram User ID: {ig_user_id}")
 
-            # 使用 graph.instagram.com 並使用 Authorization header
-            create_url = f"https://graph.instagram.com/v21.0/{ig_user_id}/media"
-            headers = {
-                "Authorization": f"Bearer {current_token}",
-                "Content-Type": "application/json",
+            # 使用 Facebook Graph API 端點（Instagram 內容發布必須用此端點）
+            create_url = f"https://graph.facebook.com/v21.0/{ig_user_id}/media"
+            create_payload = {
+                "image_url": image_to_use,
+                "caption": caption,
+                "access_token": current_token,
             }
-            create_payload = {"image_url": image_to_use, "caption": caption}
 
             print(f"📤 API URL: {create_url}")
-            create_response = requests.post(
-                create_url, headers=headers, json=create_payload, timeout=30
-            )
+            create_response = requests.post(create_url, data=create_payload, timeout=30)
 
             if create_response.status_code != 200:
                 error_msg = f"Instagram 媒體容器創建失敗: {create_response.status_code} - {create_response.text}"
@@ -1551,13 +1575,14 @@ async def publish_to_instagram(request: InstagramPublishRequest):
             # 步驟2: 發布媒體容器
             print("📤 正在發布 Instagram 貼文...")
 
-            publish_url = (
-                f"https://graph.instagram.com/v21.0/{ig_user_id}/media_publish"
-            )
-            publish_payload = {"creation_id": creation_id}
+            publish_url = f"https://graph.facebook.com/v21.0/{ig_user_id}/media_publish"
+            publish_payload = {
+                "creation_id": creation_id,
+                "access_token": current_token,
+            }
 
             publish_response = requests.post(
-                publish_url, headers=headers, json=publish_payload, timeout=30
+                publish_url, data=publish_payload, timeout=30
             )
 
             if publish_response.status_code == 200:
