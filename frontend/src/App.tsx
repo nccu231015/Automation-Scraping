@@ -697,29 +697,26 @@ function App() {
       // 顯示結果
       let resultMessage = `Facebook 發布完成！\n\n總計：${total} 則\n成功：${success} 則\n失敗：${failed} 則\n\n`
 
-      if (success > 0) {
-        resultMessage += '成功發布的新聞：\n'
-        results.forEach((result: any) => {
-          if (result.success) {
-            resultMessage += `- [${result.account_name || 'Facebook'}] ID ${result.news_id}: ${result.facebook_post_url || '(已發布)'}\n`
-          }
-        })
-      }
-
-      if (failed > 0) {
-        resultMessage += '\n失敗的項目：\n'
-        results.forEach((result: any) => {
-          if (!result.success) {
-            resultMessage += `- ID ${result.news_id}: ${result.error}\n`
-          }
-        })
-      }
+      results.forEach((result: any) => {
+        if (result.success) {
+          resultMessage += `✅ [${result.account_name || 'Facebook'}] ID ${result.news_id}: ${result.facebook_post_url || '(已發布)'}\n`
+        } else {
+          resultMessage += `❌ ID ${result.news_id}: ${result.error}\n`
+        }
+      })
 
       alert(resultMessage)
 
-      // 清空選擇
-      setSelectedProcessedNewsIds([])
-      setSelectedProcessedImages({})
+      // 只有全部成功才清空選擇
+      if (failed === 0) {
+        setSelectedProcessedNewsIds([])
+        setSelectedProcessedImages({})
+      }
+
+      // 若有任何失敗，拋出錯誤讓多平台發布正確標記
+      if (failed > 0) {
+        throw new Error(`Facebook 發布部分失敗：${failed} 則失敗，${success} 則成功`)
+      }
 
     } catch (err: any) {
       console.error('發布到 Facebook 失敗:', err)
