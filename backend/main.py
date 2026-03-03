@@ -184,13 +184,20 @@ for i in range(1, 11):  # 支援最多 10 個粉絲團
     page_token = os.getenv(f"FACEBOOK_PAGE_TOKEN_{i}")
     page_id = os.getenv(f"FACEBOOK_PAGE_ID_{i}")
 
-    if page_token:
+    if page_token and page_id:
+        account_id = f"fb_account_{i}"
+        facebook_accounts[account_id] = {
+            "id": page_id,
+            "name": page_name or f"Facebook 粉絲團 {i}",
+            "token": page_token,
+        }
+        facebook_configured = True
+    elif page_token:
         account_id = f"fb_account_{i}"
         facebook_accounts[account_id] = {
             "id": account_id,
-            "name": page_name or f"Facebook 粉絲團 {i} ({page_id or '未知 ID'})",
+            "name": page_name or f"Facebook 粉絲團 {i}",
             "token": page_token,
-            "page_id": page_id,
         }
         facebook_configured = True
 

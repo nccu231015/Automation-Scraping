@@ -651,7 +651,7 @@ function App() {
     }
   }
 
-  const handleFacebookPublish = async () => {
+  const handleFacebookPublish = async (silent = false) => {
     if (selectedProcessedNewsIds.length === 0) {
       alert('請至少選擇一則新聞')
       return
@@ -705,7 +705,7 @@ function App() {
         }
       })
 
-      alert(resultMessage)
+      if (!silent) alert(resultMessage)
 
       // 只有全部成功才清空選擇
       if (failed === 0) {
@@ -804,7 +804,7 @@ function App() {
     }
   }
 
-  const handleInstagramPublish = async () => {
+  const handleInstagramPublish = async (silent = false) => {
     if (selectedProcessedNewsIds.length === 0) {
       alert('請至少選擇一則新聞')
       return
@@ -836,24 +836,30 @@ function App() {
 
       results.forEach((result: any) => {
         if (result.success) {
-          resultMessage += `- [${result.account_name}] ID ${result.news_id}: ${result.instagram_post_url || '(已發布)'}\n`
+          resultMessage += `✅ [${result.account_name}] ID ${result.news_id}: ${result.instagram_post_url || '(已發布)'}\n`
         } else {
-          resultMessage += `- [${result.account_name}] ID ${result.news_id} 失敗: ${result.error}\n`
+          resultMessage += `❌ [${result.account_name}] ID ${result.news_id} 失敗: ${result.error}\n`
         }
       })
 
-      alert(resultMessage)
+      if (!silent) alert(resultMessage)
 
       // 如果全部成功，清除選擇
       if (failed === 0) {
         setSelectedProcessedNewsIds([])
         setSelectedProcessedImages({})
       }
+
+      // 若有任何失敗，拋出錯誤讓多平台發布正確標記
+      if (failed > 0) {
+        throw new Error(`Instagram 發布部分失敗：${failed} 則失敗，${success} 則成功`)
+      }
     } catch (err: any) {
       console.error('發布到 Instagram 失敗:', err)
       const detail = err.response?.data?.detail
       const errorMsg = (typeof detail === 'string' ? detail : detail ? JSON.stringify(detail) : null) || err.message || '未知錯誤'
       setError(`發布到 Instagram 失敗: ${errorMsg}`)
+      throw new Error(errorMsg)
     } finally {
       setInstagramPublishing(false)
     }
@@ -948,7 +954,7 @@ function App() {
 
           case 'facebook':
             setFacebookPublishing(true)
-            await handleFacebookPublish()
+            await handleFacebookPublish(true)
             setFacebookPublishing(false)
             results.push({ platform: 'Facebook', success: true })
             break
@@ -962,7 +968,7 @@ function App() {
 
           case 'instagram':
             setInstagramPublishing(true)
-            await handleInstagramPublish()
+            await handleInstagramPublish(true)
             setInstagramPublishing(false)
             results.push({ platform: 'Instagram', success: true })
             break
