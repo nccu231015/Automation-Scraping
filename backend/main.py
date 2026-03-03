@@ -270,28 +270,45 @@ threads_token_data = {
     "expires_in": 5184000,  # 60天（秒）
 }
 
-# Instagram 配置初始化
-instagram_user_id = os.getenv("IG_USER_ID")
-instagram_access_token = os.getenv("IG_ACCESS_TOKEN")
+# Instagram 配置初始化 (多帳號支援)
+instagram_accounts = {}
+instagram_app_id = os.getenv("IG_APP_ID")
 instagram_app_secret = os.getenv("IG_APP_SECRET")
-instagram_app_id = os.getenv("IG_APP_ID")  # 需要 App ID 來刷新 token
 
-if not all([instagram_user_id, instagram_access_token]):
-    print("⚠️ 警告: 未設定完整的 Instagram 配置，發布到 Instagram 功能將無法使用")
-    instagram_configured = False
-else:
-    instagram_configured = True
-    print("✅ Instagram 配置已載入")
-    print(f"📍 Instagram User ID: {instagram_user_id}")
-    if instagram_app_id and instagram_app_secret:
-        print("✅ Instagram Token 刷新功能已啟用")
+for i in range(1, 11):
+    user_id = os.getenv(f"IG_USER_ID_{i}")
+    token = os.getenv(f"IG_ACCESS_TOKEN_{i}")
+    name = os.getenv(f"IG_NAME_{i}") or f"Instagram Account {i}"
 
-# Instagram token 刷新時間追蹤（存儲在內存中）
-instagram_token_data = {
-    "access_token": instagram_access_token,
-    "last_refresh": None if instagram_configured else None,
-    "expires_in": 5184000,  # 60天（秒）
-}
+    if user_id and token:
+        instagram_accounts[user_id] = {
+            "id": user_id,
+            "access_token": token,
+            "name": name,
+            "last_refresh": None,
+            "expires_in": 5184000,
+        }
+        print(f"✅ Instagram 帳號 {i} 已載入: {name}")
+
+# 相容舊格式 (IG_USER_ID, IG_ACCESS_TOKEN)
+if not instagram_accounts:
+    user_id = os.getenv("IG_USER_ID")
+    token = os.getenv("IG_ACCESS_TOKEN")
+    if user_id and token:
+        instagram_accounts[user_id] = {
+            "id": user_id,
+            "access_token": token,
+            "name": os.getenv("IG_NAME") or "Default Instagram",
+            "last_refresh": None,
+            "expires_in": 5184000,
+        }
+        print(f"✅ Instagram 帳號 (舊格式) 已載入")
+
+instagram_configured = len(instagram_accounts) > 0
+if not instagram_configured:
+    print("⚠️ 警告: 未設定任何 Instagram 帳號，發布功能將無法使用")
+elif instagram_app_id and instagram_app_secret:
+    print("✅ Instagram Token 刷新功能已啟用 (適用於所有帳號)")
 
 # 暫存 system prompts (在實際應用中應該存在資料庫)
 system_prompts_storage = []
@@ -418,11 +435,13 @@ class ThreadsPublishResult(BaseModel):
 
 class InstagramPublishRequest(BaseModel):
     items: List[PublishItem]
+    account_ids: List[str]  # 更新：支援多帳號發布
 
 
 class InstagramPublishResult(BaseModel):
     news_id: int
     news_url: str
+    account_name: Optional[str] = None
     instagram_post_id: Optional[str] = None
     instagram_post_url: Optional[str] = None
     success: bool
@@ -849,10 +868,14 @@ async def publish_to_wordpress(request: WordPressPublishRequest):
         raise HTTPException(status_code=400, detail="至少需要一則新聞")
 
     # 獲取指定的 WordPress 帳號
-    if not getattr(request, 'account_ids', None):
+    if not getattr(request, "account_ids", None):
         raise HTTPException(status_code=400, detail="請選擇至少一個 WordPress 帳號")
 
-    valid_accounts = [wordpress_accounts[acc] for acc in request.account_ids if acc in wordpress_accounts]
+    valid_accounts = [
+        wordpress_accounts[acc]
+        for acc in request.account_ids
+        if acc in wordpress_accounts
+    ]
     if not valid_accounts:
         raise HTTPException(status_code=400, detail="找不到指定的任何 WordPress 帳號")
 
@@ -875,7 +898,10 @@ async def publish_to_wordpress(request: WordPressPublishRequest):
         # 建立 WordPress 認證 header
         credentials = f"{wordpress_username}:{wordpress_app_password}"
         token = base64.b64encode(credentials.encode()).decode()
-        headers = {"Authorization": f"Basic {token}", "Content-Type": "application/json"}
+        headers = {
+            "Authorization": f"Basic {token}",
+            "Content-Type": "application/json",
+        }
 
         news_id = item_data.news_id
         selected_image = item_data.selected_image
@@ -1009,7 +1035,7 @@ async def publish_to_wordpress(request: WordPressPublishRequest):
                     WordPressPublishResult(
                         news_id=news_id,
                         news_url=news_url,
-                        account_name=account['name'],
+                        account_name=account["name"],
                         wordpress_post_id=wp_post_id,
                         wordpress_post_url=wp_post_url,
                         success=True,
@@ -1033,7 +1059,7 @@ async def publish_to_wordpress(request: WordPressPublishRequest):
                     news_url=news_item.get("url", "")
                     if "news_item" in locals()
                     else "",
-                    account_name=account['name'],
+                    account_name=account["name"],
                     wordpress_post_id=None,
                     wordpress_post_url=None,
                     success=False,
@@ -1074,12 +1100,14 @@ async def publish_to_facebook(request: FacebookPublishRequest):
     results = []
 
     # 獲取指定的 Facebook 帳號
-    if getattr(request, 'account_ids', None) is None:
-        raise HTTPException(
-            status_code=400, detail="請選擇至少一個 Facebook 帳號"
-        )
+    if getattr(request, "account_ids", None) is None:
+        raise HTTPException(status_code=400, detail="請選擇至少一個 Facebook 帳號")
 
-    valid_accounts = [facebook_accounts[acc] for acc in request.account_ids if acc in facebook_accounts]
+    valid_accounts = [
+        facebook_accounts[acc]
+        for acc in request.account_ids
+        if acc in facebook_accounts
+    ]
     if not valid_accounts:
         raise HTTPException(status_code=400, detail="找不到任何有效的 Facebook 帳號")
 
@@ -1201,7 +1229,7 @@ async def publish_to_facebook(request: FacebookPublishRequest):
                     FacebookPublishResult(
                         news_id=news_id,
                         news_url=news_url,
-                        account_name=account['name'],
+                        account_name=account["name"],
                         facebook_post_id=fb_post_id,
                         facebook_post_url=fb_post_url,
                         success=True,
@@ -1225,7 +1253,7 @@ async def publish_to_facebook(request: FacebookPublishRequest):
                     news_url=news_item.get("url", "")
                     if "news_item" in locals()
                     else "",
-                    account_name=account['name'],
+                    account_name=account["name"],
                     facebook_post_id=None,
                     facebook_post_url=None,
                     success=False,
@@ -1295,65 +1323,67 @@ async def upload_image_to_wordpress(
 
 
 # Instagram 相關功能
-def refresh_instagram_token():
-    """刷新 Instagram Long-Lived Access Token（如果需要）"""
-    global instagram_token_data
+def refresh_instagram_token_for_account(account_id: str):
+    """刷新特定 Instagram 帳號的 Long-Lived Access Token"""
+    account = instagram_accounts.get(account_id)
+    if not account:
+        return None
 
     # 如果沒有 App ID 和 Secret，無法刷新
     if not instagram_app_id or not instagram_app_secret:
-        print("⚠️  無法刷新 Instagram Token：未設定 IG_APP_ID 或 IG_APP_SECRET")
-        return instagram_token_data["access_token"]
-
-    # 檢查是否需要刷新
-    if instagram_token_data["last_refresh"] is not None:
-        time_since_refresh = datetime.now() - instagram_token_data["last_refresh"]
-        # 如果距離上次刷新不到59天，不需要刷新
-        if time_since_refresh.total_seconds() < (
-            instagram_token_data["expires_in"] - 86400
-        ):
-            print("✅ Instagram Token 仍然有效，無需刷新")
-            return instagram_token_data["access_token"]
-
-    print("🔄 正在刷新 Instagram Access Token...")
+        return account["access_token"]
 
     try:
-        # Instagram Long-Lived Token 刷新 API
-        # 文檔: https://developers.facebook.com/docs/instagram-platform/instagram-graph-api/reference/refresh-access-token
+        current_token = account["access_token"]
+
+        # 呼叫 Meta API 進行刷新
         refresh_url = "https://graph.instagram.com/refresh_access_token"
         params = {
             "grant_type": "ig_refresh_token",
-            "access_token": instagram_token_data["access_token"],
+            "access_token": current_token,
         }
 
         response = requests.get(refresh_url, params=params, timeout=30)
-
         if response.status_code == 200:
             data = response.json()
             new_token = data.get("access_token")
-            expires_in = data.get("expires_in", 5184000)  # 預設60天
+            expires_in = data.get("expires_in")
 
             if new_token:
-                instagram_token_data["access_token"] = new_token
-                instagram_token_data["last_refresh"] = datetime.now()
-                instagram_token_data["expires_in"] = expires_in
-                print(
-                    f"✅ Instagram Token 刷新成功，有效期：{expires_in}秒（{expires_in / 86400:.0f}天）"
+                # 更新全局變數
+                instagram_accounts[account_id]["access_token"] = new_token
+                instagram_accounts[account_id]["expires_in"] = expires_in
+                instagram_accounts[account_id]["last_refresh"] = (
+                    datetime.now().isoformat()
                 )
+                print(f"🔄 Instagram 帳號 {account.get('name')} 的 Token 刷新成功")
                 return new_token
 
-        print(f"⚠️ Instagram Token 刷新失敗: {response.status_code} - {response.text}")
-        # 刷新失敗時，繼續使用舊 token
-        return instagram_token_data["access_token"]
-
+        print(
+            f"⚠️ Instagram 帳號 {account.get('name')} 的 Token 刷新失敗: {response.text}"
+        )
+        return current_token
     except Exception as e:
-        print(f"⚠️ Instagram Token 刷新異常: {str(e)}")
-        # 異常時，繼續使用舊 token
-        return instagram_token_data["access_token"]
+        print(f"⚠️ 刷新 Instagram Token 異常: {str(e)}")
+        return account["access_token"]
+
+
+@app.get("/api/instagram-accounts")
+async def get_instagram_accounts():
+    """獲取所有設定的 Instagram 帳號清單"""
+    if not instagram_configured:
+        return {"accounts": []}
+
+    # 格式化為前端易用的陣列
+    accounts_list = [
+        {"id": acc["id"], "name": acc["name"]} for acc in instagram_accounts.values()
+    ]
+    return {"accounts": accounts_list}
 
 
 @app.post("/api/instagram-publish")
 async def publish_to_instagram(request: InstagramPublishRequest):
-    """將選定的新聞發布到 Instagram"""
+    """將選定的新聞發布到多個 Instagram 帳號"""
     if not instagram_configured:
         raise HTTPException(
             status_code=503,
@@ -1363,24 +1393,43 @@ async def publish_to_instagram(request: InstagramPublishRequest):
     if not request.items:
         raise HTTPException(status_code=400, detail="至少需要一則新聞")
 
-    # 刷新 token（如果需要）
-    current_token = refresh_instagram_token()
+    if not getattr(request, "account_ids", None):
+        raise HTTPException(status_code=400, detail="請選擇至少一個 Instagram 帳號")
+
+    # 驗證帳號
+    valid_accounts = []
+    for acc_id in request.account_ids:
+        if acc_id in instagram_accounts:
+            valid_accounts.append(instagram_accounts[acc_id])
+
+    if not valid_accounts:
+        raise HTTPException(status_code=400, detail="所選的 Instagram 帳號無效")
 
     results = []
 
+    # 建立任務列表：每個帳號 * 每則新聞
+    tasks = [(acc, item) for acc in valid_accounts for item in request.items]
+
     print("\n" + "=" * 80)
     print("🚀 開始發布到 Instagram")
-    print(f"📊 總計：{len(request.items)} 則新聞")
+    print(
+        f"📊 總計任務數：{len(tasks)} (帳號: {len(valid_accounts)}, 新聞: {len(request.items)})"
+    )
     print("=" * 80 + "\n")
 
-    # 處理每則新聞
-    for idx, item_data in enumerate(request.items, 1):
+    # 處理任務
+    for idx, (account, item_data) in enumerate(tasks, 1):
         news_id = item_data.news_id
         selected_image = item_data.selected_image
+        ig_user_id = account["id"]
+
+        # 刷新該帳號 token
+        current_token = refresh_instagram_token_for_account(account["id"])
 
         try:
             print(f"\n{'─' * 80}")
-            print(f"📰 處理第 {idx}/{len(request.items)} 則新聞")
+            print(f"📰 處理第 {idx}/{len(tasks)} 項任務")
+            print(f"👤 帳號: {account['name']}")
             print(f"🆔 新聞 ID: {news_id}")
             if selected_image:
                 print(f"🖼️  指定圖片: {selected_image}")
@@ -1461,10 +1510,10 @@ async def publish_to_instagram(request: InstagramPublishRequest):
             # Debug: 檢查 token
             print(f"🔑 Access Token 前20字符: {current_token[:20]}...")
             print(f"🔑 Access Token 長度: {len(current_token)}")
-            print(f"📍 Instagram User ID: {instagram_user_id}")
+            print(f"📍 Instagram User ID: {ig_user_id}")
 
             # 使用 graph.instagram.com 並使用 Authorization header
-            create_url = f"https://graph.instagram.com/v21.0/{instagram_user_id}/media"
+            create_url = f"https://graph.instagram.com/v21.0/{ig_user_id}/media"
             headers = {
                 "Authorization": f"Bearer {current_token}",
                 "Content-Type": "application/json",
@@ -1496,7 +1545,7 @@ async def publish_to_instagram(request: InstagramPublishRequest):
             print("📤 正在發布 Instagram 貼文...")
 
             publish_url = (
-                f"https://graph.instagram.com/v21.0/{instagram_user_id}/media_publish"
+                f"https://graph.instagram.com/v21.0/{ig_user_id}/media_publish"
             )
             publish_payload = {"creation_id": creation_id}
 
@@ -1524,6 +1573,7 @@ async def publish_to_instagram(request: InstagramPublishRequest):
                     InstagramPublishResult(
                         news_id=news_id,
                         news_url=news_url,
+                        account_name=account["name"],
                         instagram_post_id=instagram_post_id,
                         instagram_post_url=instagram_post_url,
                         success=True,
@@ -1531,12 +1581,13 @@ async def publish_to_instagram(request: InstagramPublishRequest):
                     )
                 )
             else:
-                error_msg = f"Instagram 發布失敗: {publish_response.status_code} - {publish_response.text}"
+                error_data = publish_response.json()
+                error_msg = f"Instagram 發布失敗: {publish_response.status_code} - {json.dumps(error_data)}"
                 raise ValueError(error_msg)
 
         except Exception as e:
             error_msg = str(e)
-            print(f"❌ 發布失敗 (第 {idx}/{len(request.items)} 則)")
+            print(f"❌ 發布失敗 (第 {idx}/{len(tasks)} 項任務)")
             print(f"   錯誤: {error_msg}")
             print(f"   詳細錯誤: {traceback.format_exc()}")
             print(f"{'─' * 80}\n")

@@ -76,6 +76,10 @@ function App() {
   const [facebookAccounts, setFacebookAccounts] = useState<Array<{ id: string, name: string }>>([])
   const [selectedFacebookAccounts, setSelectedFacebookAccounts] = useState<string[]>([])
 
+  // Instagram 帳號相關狀態 (新增)
+  const [instagramAccounts, setInstagramAccounts] = useState<Array<{ id: string, name: string }>>([])
+  const [selectedInstagramAccounts, setSelectedInstagramAccounts] = useState<string[]>([])
+
   // 多平台發布選擇
   const [selectedPlatforms, setSelectedPlatforms] = useState<{
     wordpress: boolean
@@ -116,6 +120,11 @@ function App() {
     fetchFacebookAccounts()
   }, [])
 
+  // 獲取 Instagram 帳號列表
+  useEffect(() => {
+    fetchInstagramAccounts()
+  }, [])
+
   const fetchSystemPrompts = async () => {
     try {
       const response = await axios.get<SystemPrompt[]>('/api/prompts')
@@ -152,6 +161,20 @@ function App() {
       setFacebookAccounts([])
     }
   }
+
+  const fetchInstagramAccounts = async () => {
+    try {
+      const response = await axios.get<{ accounts: Array<{ id: string, name: string }> }>('/api/instagram-accounts')
+      setInstagramAccounts(response.data.accounts)
+      if (response.data.accounts.length > 0) {
+        setSelectedInstagramAccounts([response.data.accounts[0].id])
+      }
+    } catch (err) {
+      console.error('獲取 Instagram 帳號失敗:', err)
+      setInstagramAccounts([])
+    }
+  }
+
 
   // 獲取新聞列表
   useEffect(() => {
@@ -790,70 +813,50 @@ function App() {
       return
     }
 
+    if (selectedInstagramAccounts.length === 0) {
+      alert('請至少選擇一個 Instagram 帳號')
+      return
+    }
+
     setInstagramPublishing(true)
     setError(null)
 
     try {
       // 準備發布的項目，包含選定的圖片
-      const publishItems = selectedProcessedNewsIds.map(id => {
-        // 找出該新聞
-        const news = processedNewsList.find(n => n.id === id)
-        // 找出選定的圖片，如果沒有選定，則使用該新聞的第一張圖片
-        let selectedImage = selectedProcessedImages[id]
-
-        if (!selectedImage && news && news.images) {
-          const images = parseImages(news.images)
-          if (images.length > 0) {
-            selectedImage = images[0]
-          }
-        }
-
-        return {
-          news_id: id,
-          selected_image: selectedImage
-        }
-      })
+      const publishItems = selectedProcessedNewsIds.map(id => ({
+        news_id: id,
+        selected_image: selectedProcessedImages[id] || null
+      }))
 
       console.log('發布新聞到 Instagram，Items:', publishItems)
-
       const response = await axios.post('/api/instagram-publish', {
-        items: publishItems
+        items: publishItems,
+        account_ids: selectedInstagramAccounts
       })
 
       const { total, success, failed, results } = response.data
+      let resultMessage = `Instagram 發布完成！\n\n總計任務：${total}\n成功：${success}\n失敗：${failed}\n\n`
 
-      // 顯示結果
-      let resultMessage = `Instagram 發布完成！\n\n總計：${total} 則\n成功：${success} 則\n失敗：${failed} 則\n\n`
-
-      if (success > 0) {
-        resultMessage += '成功發布的新聞：\n'
-        results.forEach((result: any) => {
-          if (result.success) {
-            resultMessage += `- ID ${result.news_id}: ${result.instagram_post_url || '(已發布)'}\n`
-          }
-        })
-      }
-
-      if (failed > 0) {
-        resultMessage += '\n失敗的項目：\n'
-        results.forEach((result: any) => {
-          if (!result.success) {
-            resultMessage += `- ID ${result.news_id}: ${result.error}\n`
-          }
-        })
-      }
+      results.forEach((result: any) => {
+        if (result.success) {
+          resultMessage += `- [${result.account_name}] ID ${result.news_id}: ${result.instagram_post_url || '(已發布)'}\n`
+        } else {
+          resultMessage += `- [${result.account_name}] ID ${result.news_id} 失敗: ${result.error}\n`
+        }
+      })
 
       alert(resultMessage)
 
-      // 清空選擇
-      setSelectedProcessedNewsIds([])
-      setSelectedProcessedImages({})
-
+      // 如果全部成功，清除選擇
+      if (failed === 0) {
+        setSelectedProcessedNewsIds([])
+        setSelectedProcessedImages({})
+      }
     } catch (err: any) {
       console.error('發布到 Instagram 失敗:', err)
-      const errorMsg = err.response?.data?.detail || err.message || '未知錯誤'
+      const detail = err.response?.data?.detail
+      const errorMsg = (typeof detail === 'string' ? detail : detail ? JSON.stringify(detail) : null) || err.message || '未知錯誤'
       setError(`發布到 Instagram 失敗: ${errorMsg}`)
-      alert(`發布失敗：${errorMsg}`)
     } finally {
       setInstagramPublishing(false)
     }
@@ -1838,11 +1841,47 @@ function App() {
                                     <input
                                       type="checkbox"
                                       checked={selectedPlatforms.instagram}
-                                      onChange={(e) => setSelectedPlatforms({ ...selectedPlatforms, instagram: e.target.checked })}
+                                      onChange={(e) => {
+                                        setSelectedPlatforms({ ...selectedPlatforms, instagram: e.target.checked });
+                                        // 全選/取消全選帳號
+                                        if (e.target.checked && instagramAccounts.length > 0) {
+                                          setSelectedInstagramAccounts(instagramAccounts.map(acc => acc.id));
+                                        } else {
+                                          setSelectedInstagramAccounts([]);
+                                        }
+                                      }}
                                       style={{ cursor: 'pointer', width: '18px', height: '18px' }}
                                     />
                                     <span style={{ fontWeight: 500, color: '#E4405F', marginLeft: '8px' }}>Instagram</span>
                                   </label>
+
+                                  {selectedPlatforms.instagram && instagramAccounts.length > 0 && (
+                                    <div style={{ paddingLeft: '26px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                      {instagramAccounts.map(account => (
+                                        <label key={account.id} style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', fontSize: '14px' }}>
+                                          <input
+                                            type="checkbox"
+                                            checked={selectedInstagramAccounts.includes(account.id)}
+                                            onChange={(e) => {
+                                              if (e.target.checked) {
+                                                setSelectedInstagramAccounts([...selectedInstagramAccounts, account.id]);
+                                              } else {
+                                                setSelectedInstagramAccounts(selectedInstagramAccounts.filter(id => id !== account.id));
+                                              }
+                                            }}
+                                            style={{ cursor: 'pointer', marginRight: '8px' }}
+                                          />
+                                          {account.name}
+                                        </label>
+                                      ))}
+                                    </div>
+                                  )}
+
+                                  {selectedPlatforms.instagram && instagramAccounts.length === 0 && (
+                                    <div style={{ paddingLeft: '26px', fontSize: '12px', color: '#999', fontStyle: 'italic' }}>
+                                      未設定帳號
+                                    </div>
+                                  )}
                                 </div>
                               </div>
                             </div>
