@@ -185,8 +185,7 @@ for i in range(1, 11):  # 支援最多 10 個粉絲團
     page_id = os.getenv(f"FACEBOOK_PAGE_ID_{i}")
 
     if page_token and page_id:
-        account_id = f"fb_account_{i}"
-        facebook_accounts[account_id] = {
+        facebook_accounts[page_id] = {
             "id": page_id,
             "name": page_name or f"Facebook 粉絲團 {i}",
             "token": page_token,
