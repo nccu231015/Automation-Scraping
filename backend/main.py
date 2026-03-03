@@ -1200,7 +1200,8 @@ async def publish_to_facebook(request: FacebookPublishRequest):
             print(f"📤 正在發布到 Facebook...")
             print(f"🖼️  圖片 URL: {image_to_use}")
 
-            fb_api_url = "https://graph.facebook.com/v24.0/me/photos"
+            page_id = account["id"]
+            fb_api_url = f"https://graph.facebook.com/v24.0/{page_id}/photos"
             fb_params = {
                 "url": image_to_use,
                 "caption": caption,
