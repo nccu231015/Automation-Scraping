@@ -2571,18 +2571,54 @@ async def _auto_publish_job(override_config: dict = None):
         except Exception as e:
             print(f"❌ AI 重寫失敗: {e}")
 
-        # 取得圖片 (安全防呆，加上協定修正避免 Meta aspect ratio null error)
+        # 取得圖片 (過濾 SVG, GIF 或網站 Logo，避免引發 Meta API 報錯)
         image_url = None
         if images:
             try:
                 imgs = json.loads(images) if isinstance(images, str) else images
+
+                def get_img_url(img_obj):
+                    if isinstance(img_obj, dict):
+                        return img_obj.get("url") or img_obj.get("src")
+                    return str(img_obj)
+
                 if isinstance(imgs, list) and len(imgs) > 0:
-                    first_img = imgs[0]
-                    image_url = (
-                        first_img.get("url") or first_img.get("src")
-                        if isinstance(first_img, dict)
-                        else str(first_img)
-                    )
+                    valid_ex = (".jpg", ".jpeg", ".png", ".webp", ".heif")
+                    for img in imgs:
+                        url = get_img_url(img)
+                        if not url:
+                            continue
+                        lb_url = url.lower()
+                        # 排除 SVG, GIF 與可能為網站圖示 (logo/icon) 的圖
+                        if (
+                            ".svg" in lb_url
+                            or ".gif" in lb_url
+                            or "logo" in lb_url
+                            or "icon" in lb_url
+                        ):
+                            continue
+
+                        base_url = lb_url.split("?")[0]
+                        if any(base_url.endswith(ext) for ext in valid_ex):
+                            image_url = url
+                            break
+
+                    # 如果找不到標準副檔名，選出不是 SVG / Logo 的第一張圖
+                    if not image_url:
+                        for img in imgs:
+                            url = get_img_url(img)
+                            if (
+                                url
+                                and ".svg" not in url.lower()
+                                and "logo" not in url.lower()
+                            ):
+                                image_url = url
+                                break
+
+                    # 最後防線，若都篩不出來則先給第一張
+                    if not image_url:
+                        image_url = get_img_url(imgs[0])
+
                 elif isinstance(imgs, dict):
                     image_url = imgs.get("url") or imgs.get("src")
                 elif isinstance(imgs, str):
