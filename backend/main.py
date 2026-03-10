@@ -2591,29 +2591,41 @@ async def _auto_publish_job():
         # WordPress
         if config["platforms"].get("wordpress") and wordpress_configured:
             for acc_id, acc in wordpress_accounts.items():
+                acc_name = acc.get("name", acc_id)
                 try:
-                    news_data = {
-                        "id": news_id,
-                        "url": news_item.get("url", ""),
-                        "title_modified": title_mod,
-                        "content_modified": content_mod,
-                        "images": images,
-                        "category_zh": "",
-                        "category_en": "",
-                    }
                     wp_url = acc["url"]
+                    credentials = f"{acc['username']}:{acc['password']}"
+                    token = base64.b64encode(credentials.encode()).decode()
                     headers = {
-                        "Authorization": "Basic "
-                        + base64.b64encode(
-                            f"{acc['username']}:{acc['app_password']}".encode()
-                        ).decode()
+                        "Authorization": f"Basic {token}",
+                        "Content-Type": "application/json",
                     }
-                    content_html = content_mod or ""
-                    post_data = {
+
+                    # 嘗試上傳圖片到 WP media library
+                    featured_media_id = None
+                    if image_url:
+                        try:
+                            featured_media_id = await upload_image_to_wordpress(
+                                image_url, wp_url, headers
+                            )
+                        except Exception as img_e:
+                            print(f"  ⚠️ WordPress [{acc_name}] 圖片上傳失敗: {img_e}")
+
+                    # 加入來源連結
+                    news_url_link = news_item.get("url", "")
+                    content_with_source = title_mod + "\n\n" + (content_mod or "")
+                    if news_url_link:
+                        content_with_source += f"\n\n<p><small>原始來源: <a href='{news_url_link}' target='_blank'>{news_url_link}</a></small></p>"
+
+                    post_data: dict = {
                         "title": title_mod,
-                        "content": content_html,
+                        "content": content_with_source,
                         "status": "publish",
+                        "format": "standard",
                     }
+                    if featured_media_id:
+                        post_data["featured_media"] = featured_media_id
+
                     wp_resp = requests.post(
                         f"{wp_url.rstrip('/')}/wp-json/wp/v2/posts",
                         json=post_data,
@@ -2621,19 +2633,24 @@ async def _auto_publish_job():
                         timeout=30,
                     )
                     ok = wp_resp.status_code in (200, 201)
-                    post_url = wp_resp.json().get("link") if ok else None
+                    post_link = wp_resp.json().get("link") if ok else None
+                    err_msg = (
+                        None
+                        if ok
+                        else f"HTTP {wp_resp.status_code}: {wp_resp.text[:200]}"
+                    )
                     _save_auto_publish_log(
                         news_id,
                         title_mod,
                         source_website,
                         "wordpress",
-                        acc.get("name", acc_id),
+                        acc_name,
                         ok,
-                        None if ok else wp_resp.text[:200],
-                        post_url,
+                        err_msg,
+                        post_link,
                     )
                     print(
-                        f"  {'\u2705' if ok else '\u274c'} WordPress [{acc.get('name')}]"
+                        f"  {'\u2705' if ok else '\u274c'} WordPress [{acc_name}]{'' if ok else f' -> {err_msg}'}"
                     )
                 except Exception as e:
                     _save_auto_publish_log(
@@ -2641,56 +2658,85 @@ async def _auto_publish_job():
                         title_mod,
                         source_website,
                         "wordpress",
-                        acc.get("name", acc_id),
+                        acc_name,
                         False,
                         str(e),
                     )
+                    print(f"  ❌ WordPress [{acc_name}] 例外: {e}")
 
-        # Facebook
+        # Facebook — 對齊半自動版本 (v24.0, params=, 含來源連結)
         if config["platforms"].get("facebook") and facebook_configured:
             for acc_id, acc in facebook_accounts.items():
+                acc_name = acc.get("name", acc_id)
                 try:
-                    page_id = acc["page_id"]
+                    page_id = acc["id"]
                     page_token = acc["token"]
-                    # 換取 page token
-                    token_resp = requests.get(
-                        f"https://graph.facebook.com/v19.0/{page_id}",
-                        params={"fields": "access_token", "access_token": page_token},
-                        timeout=10,
-                    )
-                    if (
-                        token_resp.status_code == 200
-                        and "access_token" in token_resp.json()
-                    ):
-                        page_token = token_resp.json()["access_token"]
 
-                    fb_url = f"https://graph.facebook.com/v19.0/{page_id}/photos"
-                    text = f"{title_mod}\n\n{content_mod[:400]}"
-                    fb_data = {
-                        "caption": text,
-                        "url": image_url,
-                        "access_token": page_token,
-                    }
+                    # 換取 Page Access Token
+                    try:
+                        pt_resp = requests.get(
+                            f"https://graph.facebook.com/v24.0/{page_id}",
+                            params={
+                                "fields": "access_token",
+                                "access_token": page_token,
+                            },
+                            timeout=10,
+                        )
+                        if pt_resp.status_code == 200:
+                            pt = pt_resp.json().get("access_token")
+                            if pt:
+                                page_token = pt
+                    except Exception as pt_e:
+                        print(f"  ⚠️ Facebook [{acc_name}] 取 Page Token 失敗: {pt_e}")
+
+                    news_url_link = news_item.get("url", "")
+                    caption = f"{title_mod}\n\n{content_mod}"
+                    if news_url_link:
+                        caption += f"\n\n原始來源: {news_url_link}"
+
                     if image_url:
-                        fb_resp = requests.post(fb_url, data=fb_data, timeout=30)
-                    else:
                         fb_resp = requests.post(
-                            f"https://graph.facebook.com/v19.0/{page_id}/feed",
-                            data={"message": text, "access_token": page_token},
+                            f"https://graph.facebook.com/v24.0/{page_id}/photos",
+                            params={
+                                "url": image_url,
+                                "caption": caption,
+                                "access_token": page_token,
+                            },
                             timeout=30,
                         )
+                    else:
+                        fb_resp = requests.post(
+                            f"https://graph.facebook.com/v24.0/{page_id}/feed",
+                            params={"message": caption, "access_token": page_token},
+                            timeout=30,
+                        )
+
                     ok = fb_resp.status_code == 200
+                    try:
+                        fb_err = fb_resp.json().get("error", {})
+                        err_msg = (
+                            None
+                            if ok
+                            else f"HTTP {fb_resp.status_code}: {fb_err.get('message', fb_resp.text[:150])}"
+                        )
+                    except Exception:
+                        err_msg = (
+                            None
+                            if ok
+                            else f"HTTP {fb_resp.status_code}: {fb_resp.text[:200]}"
+                        )
+
                     _save_auto_publish_log(
                         news_id,
                         title_mod,
                         source_website,
                         "facebook",
-                        acc.get("name", acc_id),
+                        acc_name,
                         ok,
-                        None if ok else fb_resp.text[:200],
+                        err_msg,
                     )
                     print(
-                        f"  {'\u2705' if ok else '\u274c'} Facebook [{acc.get('name')}]"
+                        f"  {'\u2705' if ok else '\u274c'} Facebook [{acc_name}]{'' if ok else f' -> {err_msg}'}"
                     )
                 except Exception as e:
                     _save_auto_publish_log(
@@ -2698,52 +2744,74 @@ async def _auto_publish_job():
                         title_mod,
                         source_website,
                         "facebook",
-                        acc.get("name", acc_id),
+                        acc_name,
                         False,
                         str(e),
                     )
+                    print(f"  ❌ Facebook [{acc_name}] 例外: {e}")
 
-        # Instagram
+        # Instagram — 對齊半自動版本 (v21.0, token刷新, sleep 5s, 2200字截斷)
         if config["platforms"].get("instagram") and instagram_configured and image_url:
             for acc_id, acc in instagram_accounts.items():
+                acc_name = acc.get("name", acc_id)
                 try:
                     ig_id = acc["id"]
-                    ig_token = acc["token"]
-                    text = f"{title_mod}\n\n{content_mod[:400]}"
-                    # Create container
+                    ig_token = refresh_instagram_token_for_account(ig_id)
+
+                    news_url_link = news_item.get("url", "")
+                    caption = f"{title_mod}\n\n{content_mod}"
+                    if news_url_link:
+                        caption += f"\n\n🔗 {news_url_link}"
+                    if len(caption) > 2200:
+                        caption = caption[:2197] + "..."
+
+                    # Step 1: 創建 media container
                     c_resp = requests.post(
-                        f"https://graph.facebook.com/v19.0/{ig_id}/media",
-                        params={
+                        f"https://graph.facebook.com/v21.0/{ig_id}/media",
+                        data={
                             "image_url": image_url,
-                            "caption": text,
+                            "caption": caption,
                             "access_token": ig_token,
                         },
                         timeout=30,
                     )
-                    ok = False
-                    if c_resp.status_code == 200:
-                        container_id = c_resp.json().get("id")
-                        if container_id:
-                            p_resp = requests.post(
-                                f"https://graph.facebook.com/v19.0/{ig_id}/media_publish",
-                                params={
-                                    "creation_id": container_id,
-                                    "access_token": ig_token,
-                                },
-                                timeout=30,
-                            )
-                            ok = p_resp.status_code == 200
+                    if c_resp.status_code != 200:
+                        raise ValueError(
+                            f"IG 容器創建失敗: {c_resp.status_code} - {c_resp.text}"
+                        )
+
+                    container_id = c_resp.json().get("id")
+                    if not container_id:
+                        raise ValueError("IG 無法取得 creation_id")
+
+                    # Step 2: 等待 Meta 處理
+                    time.sleep(5)
+
+                    # Step 3: 發布
+                    p_resp = requests.post(
+                        f"https://graph.facebook.com/v21.0/{ig_id}/media_publish",
+                        data={"creation_id": container_id, "access_token": ig_token},
+                        timeout=30,
+                    )
+                    ok = p_resp.status_code == 200
+                    if ok:
+                        err_msg = None
+                    else:
+                        try:
+                            err_msg = f"HTTP {p_resp.status_code}: {p_resp.json().get('error', {}).get('message', p_resp.text[:150])}"
+                        except Exception:
+                            err_msg = f"HTTP {p_resp.status_code}: {p_resp.text[:200]}"
                     _save_auto_publish_log(
                         news_id,
                         title_mod,
                         source_website,
                         "instagram",
-                        acc.get("name", acc_id),
+                        acc_name,
                         ok,
-                        None if ok else c_resp.text[:200],
+                        err_msg,
                     )
                     print(
-                        f"  {'\u2705' if ok else '\u274c'} Instagram [{acc.get('name')}]"
+                        f"  {'\u2705' if ok else '\u274c'} Instagram [{acc_name}]{'' if ok else f' -> {err_msg}'}"
                     )
                 except Exception as e:
                     _save_auto_publish_log(
@@ -2751,10 +2819,11 @@ async def _auto_publish_job():
                         title_mod,
                         source_website,
                         "instagram",
-                        acc.get("name", acc_id),
+                        acc_name,
                         False,
                         str(e),
                     )
+                    print(f"  ❌ Instagram [{acc_name}] 例外: {e}")
 
         # Threads
         if config["platforms"].get("threads") and threads_configured and image_url:
