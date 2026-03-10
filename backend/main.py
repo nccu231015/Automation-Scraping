@@ -2700,7 +2700,7 @@ async def _auto_publish_job(override_config: dict = None):
                     if image_url:
                         fb_resp = requests.post(
                             f"https://graph.facebook.com/v24.0/{page_id}/photos",
-                            params={
+                            data={
                                 "url": image_url,
                                 "caption": caption,
                                 "access_token": page_token,
@@ -2710,7 +2710,7 @@ async def _auto_publish_job(override_config: dict = None):
                     else:
                         fb_resp = requests.post(
                             f"https://graph.facebook.com/v24.0/{page_id}/feed",
-                            params={"message": caption, "access_token": page_token},
+                            data={"message": caption, "access_token": page_token},
                             timeout=30,
                         )
 
@@ -2779,6 +2779,16 @@ async def _auto_publish_job(override_config: dict = None):
                         timeout=30,
                     )
                     if c_resp.status_code != 200:
+                        try:
+                            err_data = c_resp.json()
+                            err_code = err_data.get("error", {}).get("code")
+                            err_subcode = err_data.get("error", {}).get("error_subcode")
+                            if err_code == 36003 and err_subcode == 2207009:
+                                raise ValueError(
+                                    "IG 圖片長寬比例不符 (必須介於 4:5 至 1.91:1 之間)"
+                                )
+                        except Exception as parse_e:
+                            pass
                         raise ValueError(
                             f"IG 容器創建失敗: {c_resp.status_code} - {c_resp.text}"
                         )
