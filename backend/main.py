@@ -16,6 +16,10 @@ import base64
 from requests_oauthlib import OAuth1
 from datetime import datetime
 import time
+import random
+import asyncio
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 
 
 # 定義 Prompt 模型
@@ -2414,3 +2418,503 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
+
+# ============================================================
+# 自動發文排程模組
+# ============================================================
+
+# 自動發文設定預設値
+auto_publish_config = {
+    "enabled": False,
+    "publish_times": ["09:00", "17:00"],  # 預設兩個時間點
+    "platforms": {
+        "wordpress": True,
+        "facebook": True,
+        "instagram": True,
+        "threads": True,
+    },
+}
+
+# APScheduler 實例
+auto_scheduler = BackgroundScheduler(timezone="Asia/Taipei")
+auto_scheduler.start()
+
+
+def _save_auto_publish_log(
+    news_id,
+    news_title,
+    source_website,
+    platform,
+    account_name,
+    success,
+    error_msg=None,
+    post_url=None,
+):
+    """將發文結果儲存到 Supabase auto_publish_logs"""
+    try:
+        supabase.table("auto_publish_logs").insert(
+            {
+                "news_id": news_id,
+                "news_title": (news_title or "")[:200],
+                "source_website": source_website,
+                "platform": platform,
+                "account_name": account_name,
+                "success": success,
+                "error_message": error_msg,
+                "post_url": post_url,
+            }
+        ).execute()
+    except Exception as e:
+        print(f"⚠️ 儲存自動發文 log 失敗: {e}")
+
+
+async def _auto_publish_job():
+    """自動發文主流程"""
+    print("\n" + "=" * 80)
+    print(f"🤖 自動發文工作開始 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("=" * 80)
+
+    config = auto_publish_config
+    if not config["enabled"]:
+        print("⏸ 自動發文已停用")
+        return
+
+    # 1. 從 Supabase 取得 test prompt
+    try:
+        prompt_resp = (
+            supabase.table("system_prompts").select("*").eq("name", "test").execute()
+        )
+        if not prompt_resp.data:
+            print("❌ 無法找到 name='test' 的 system prompt")
+            return
+        test_prompt_text = prompt_resp.data[0]["prompt"]
+        print(f"✅ 取得 system prompt (test): {test_prompt_text[:80]}...")
+    except Exception as e:
+        print(f"❌ 取得 system prompt 失敗: {e}")
+        return
+
+    # 2. 從每個來源隨機取 1 篇新聞
+    try:
+        # 取出所有已有 title_translated 且還未重寫的新聞 - 限制數量
+        news_resp = (
+            supabase.table(table_name)
+            .select(
+                "id, title_translated, content_translated, images, sourceWebsite, url"
+            )
+            .is_("title_modified", "null")
+            .not_.is_("title_translated", "null")
+            .not_.is_("content_translated", "null")
+            .limit(200)
+            .execute()
+        )
+        if not news_resp.data:
+            print("❌ 無可用新聞")
+            return
+
+        # 依 source_website 分組隨機取
+        by_source = {}
+        for item in news_resp.data:
+            src = item.get("sourceWebsite") or "unknown"
+            by_source.setdefault(src, []).append(item)
+
+        selected_news = []
+        for src, items in by_source.items():
+            selected_news.append(random.choice(items))
+
+        print(f"✅ 共 {len(selected_news)} 篇新聞將發布 (來自 {len(by_source)} 個來源)")
+    except Exception as e:
+        print(f"❌ 取得新聞失敗: {e}")
+        return
+
+    # 3. AI 重寫 + 發文
+    full_system_prompt = test_prompt_text
+    full_system_prompt += '\n\n## 輸出格式要求\n你必須嚴格按照以下 JSON 格式輸出，不要包含任何其他文字：\n```json\n{\n  "title_modified": "重新撰寫的標題",\n  "content_modified": "重新撰寫的內容"\n}\n```'
+
+    for news_item in selected_news:
+        news_id = news_item["id"]
+        title = news_item.get("title_translated", "")
+        content = news_item.get("content_translated", "")
+        source_website = news_item.get("sourceWebsite", "unknown")
+        images = news_item.get("images")
+
+        print(f"\n── 處理新聞 ID: {news_id} | 來源: {source_website} ──")
+
+        # AI 重寫
+        try:
+            ai_response = openai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": full_system_prompt},
+                    {"role": "user", "content": f"標題：{title}\n\n內容：{content}"},
+                ],
+                temperature=0.7,
+                max_tokens=2000,
+            )
+            raw = ai_response.choices[0].message.content.strip()
+            # 解析 JSON
+            if "```json" in raw:
+                raw = raw.split("```json")[1].split("```")[0].strip()
+            elif "```" in raw:
+                raw = raw.split("```")[1].split("```")[0].strip()
+            parsed = json.loads(raw)
+            title_mod = parsed.get("title_modified", title)
+            content_mod = parsed.get("content_modified", content)
+
+            # 儲回 Supabase
+            supabase.table(table_name).update(
+                {
+                    "title_modified": title_mod,
+                    "content_modified": content_mod,
+                }
+            ).eq("id", news_id).execute()
+            print(f"✅ AI 重寫完成: {title_mod[:40]}...")
+        except Exception as e:
+            print(f"❌ AI 重寫失敗: {e}")
+            title_mod = title
+            content_mod = content
+
+        # 取得圖片
+        image_url = None
+        if images:
+            try:
+                imgs = json.loads(images) if isinstance(images, str) else images
+                if isinstance(imgs, list) and len(imgs) > 0:
+                    image_url = imgs[0]
+            except Exception:
+                pass
+
+        pub_item = {"news_id": news_id, "selected_image": image_url}
+
+        # 4. 依設定對各平台發文
+
+        # WordPress
+        if config["platforms"].get("wordpress") and wordpress_configured:
+            for acc_id, acc in wordpress_accounts.items():
+                try:
+                    news_data = {
+                        "id": news_id,
+                        "url": news_item.get("url", ""),
+                        "title_modified": title_mod,
+                        "content_modified": content_mod,
+                        "images": images,
+                        "category_zh": "",
+                        "category_en": "",
+                    }
+                    wp_url = acc["url"]
+                    headers = {
+                        "Authorization": "Basic "
+                        + base64.b64encode(
+                            f"{acc['username']}:{acc['app_password']}".encode()
+                        ).decode()
+                    }
+                    content_html = content_mod or ""
+                    post_data = {
+                        "title": title_mod,
+                        "content": content_html,
+                        "status": "publish",
+                    }
+                    wp_resp = requests.post(
+                        f"{wp_url.rstrip('/')}/wp-json/wp/v2/posts",
+                        json=post_data,
+                        headers=headers,
+                        timeout=30,
+                    )
+                    ok = wp_resp.status_code in (200, 201)
+                    post_url = wp_resp.json().get("link") if ok else None
+                    _save_auto_publish_log(
+                        news_id,
+                        title_mod,
+                        source_website,
+                        "wordpress",
+                        acc.get("name", acc_id),
+                        ok,
+                        None if ok else wp_resp.text[:200],
+                        post_url,
+                    )
+                    print(
+                        f"  {'\u2705' if ok else '\u274c'} WordPress [{acc.get('name')}]"
+                    )
+                except Exception as e:
+                    _save_auto_publish_log(
+                        news_id,
+                        title_mod,
+                        source_website,
+                        "wordpress",
+                        acc.get("name", acc_id),
+                        False,
+                        str(e),
+                    )
+
+        # Facebook
+        if config["platforms"].get("facebook") and facebook_configured:
+            for acc_id, acc in facebook_accounts.items():
+                try:
+                    page_id = acc["page_id"]
+                    page_token = acc["token"]
+                    # 換取 page token
+                    token_resp = requests.get(
+                        f"https://graph.facebook.com/v19.0/{page_id}",
+                        params={"fields": "access_token", "access_token": page_token},
+                        timeout=10,
+                    )
+                    if (
+                        token_resp.status_code == 200
+                        and "access_token" in token_resp.json()
+                    ):
+                        page_token = token_resp.json()["access_token"]
+
+                    fb_url = f"https://graph.facebook.com/v19.0/{page_id}/photos"
+                    text = f"{title_mod}\n\n{content_mod[:400]}"
+                    fb_data = {
+                        "caption": text,
+                        "url": image_url,
+                        "access_token": page_token,
+                    }
+                    if image_url:
+                        fb_resp = requests.post(fb_url, data=fb_data, timeout=30)
+                    else:
+                        fb_resp = requests.post(
+                            f"https://graph.facebook.com/v19.0/{page_id}/feed",
+                            data={"message": text, "access_token": page_token},
+                            timeout=30,
+                        )
+                    ok = fb_resp.status_code == 200
+                    _save_auto_publish_log(
+                        news_id,
+                        title_mod,
+                        source_website,
+                        "facebook",
+                        acc.get("name", acc_id),
+                        ok,
+                        None if ok else fb_resp.text[:200],
+                    )
+                    print(
+                        f"  {'\u2705' if ok else '\u274c'} Facebook [{acc.get('name')}]"
+                    )
+                except Exception as e:
+                    _save_auto_publish_log(
+                        news_id,
+                        title_mod,
+                        source_website,
+                        "facebook",
+                        acc.get("name", acc_id),
+                        False,
+                        str(e),
+                    )
+
+        # Instagram
+        if config["platforms"].get("instagram") and instagram_configured and image_url:
+            for acc_id, acc in instagram_accounts.items():
+                try:
+                    ig_id = acc["id"]
+                    ig_token = acc["token"]
+                    text = f"{title_mod}\n\n{content_mod[:400]}"
+                    # Create container
+                    c_resp = requests.post(
+                        f"https://graph.facebook.com/v19.0/{ig_id}/media",
+                        params={
+                            "image_url": image_url,
+                            "caption": text,
+                            "access_token": ig_token,
+                        },
+                        timeout=30,
+                    )
+                    ok = False
+                    if c_resp.status_code == 200:
+                        container_id = c_resp.json().get("id")
+                        if container_id:
+                            p_resp = requests.post(
+                                f"https://graph.facebook.com/v19.0/{ig_id}/media_publish",
+                                params={
+                                    "creation_id": container_id,
+                                    "access_token": ig_token,
+                                },
+                                timeout=30,
+                            )
+                            ok = p_resp.status_code == 200
+                    _save_auto_publish_log(
+                        news_id,
+                        title_mod,
+                        source_website,
+                        "instagram",
+                        acc.get("name", acc_id),
+                        ok,
+                        None if ok else c_resp.text[:200],
+                    )
+                    print(
+                        f"  {'\u2705' if ok else '\u274c'} Instagram [{acc.get('name')}]"
+                    )
+                except Exception as e:
+                    _save_auto_publish_log(
+                        news_id,
+                        title_mod,
+                        source_website,
+                        "instagram",
+                        acc.get("name", acc_id),
+                        False,
+                        str(e),
+                    )
+
+        # Threads
+        if config["platforms"].get("threads") and threads_configured and image_url:
+            for acc_id, acc in threads_accounts.items():
+                try:
+                    t_token = refresh_threads_token_for_account(acc["id"], acc["token"])
+                    text = f"{title_mod}\n\n{content_mod[:400]}"
+                    if len(text) > 500:
+                        text = text[:497] + "..."
+                    c_resp = requests.post(
+                        f"https://graph.threads.net/v1.0/{acc['id']}/threads",
+                        data={
+                            "media_type": "IMAGE",
+                            "image_url": image_url,
+                            "text": text,
+                            "access_token": t_token,
+                        },
+                        timeout=30,
+                    )
+                    ok = False
+                    if c_resp.status_code == 200:
+                        container_id = c_resp.json().get("id")
+                        if container_id:
+                            p_resp = requests.post(
+                                f"https://graph.threads.net/v1.0/{acc['id']}/threads_publish",
+                                data={
+                                    "creation_id": container_id,
+                                    "access_token": t_token,
+                                },
+                                timeout=30,
+                            )
+                            ok = p_resp.status_code == 200
+                    _save_auto_publish_log(
+                        news_id,
+                        title_mod,
+                        source_website,
+                        "threads",
+                        acc.get("name", acc_id),
+                        ok,
+                        None if ok else c_resp.text[:200],
+                    )
+                    print(
+                        f"  {'\u2705' if ok else '\u274c'} Threads [{acc.get('name')}]"
+                    )
+                except Exception as e:
+                    _save_auto_publish_log(
+                        news_id,
+                        title_mod,
+                        source_website,
+                        "threads",
+                        acc.get("name", acc_id),
+                        False,
+                        str(e),
+                    )
+
+    print(f"\n✅ 自動發文工作完成 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("=" * 80 + "\n")
+
+
+def _sync_auto_publish_job():
+    """同步包裝器，給 APScheduler 呼叫"""
+    asyncio.run(_auto_publish_job())
+
+
+def _rebuild_scheduler():
+    """根據設定重建排程"""
+    # 移除舊 job
+    for job in auto_scheduler.get_jobs():
+        job.remove()
+
+    if not auto_publish_config["enabled"]:
+        print("⏸ 自動發文已停用，排程已清除")
+        return
+
+    for t in auto_publish_config["publish_times"]:
+        try:
+            hour, minute = t.split(":")
+            auto_scheduler.add_job(
+                _sync_auto_publish_job,
+                CronTrigger(hour=int(hour), minute=int(minute), timezone="Asia/Taipei"),
+                id=f"auto_publish_{t}",
+                replace_existing=True,
+            )
+            print(f"⏰ 已排程自動發文: 每天 {t}")
+        except Exception as e:
+            print(f"⚠️ 排程 {t} 失敗: {e}")
+
+
+# ============================================================
+# Auto-Publish API Endpoints
+# ============================================================
+
+
+@app.get("/api/autopublish/config")
+async def get_autopublish_config():
+    """取得自動發文設定"""
+    return auto_publish_config
+
+
+@app.post("/api/autopublish/config")
+async def set_autopublish_config(config: dict):
+    """更新自動發文設定"""
+    global auto_publish_config
+    auto_publish_config.update(config)
+    _rebuild_scheduler()
+    return {"ok": True, "config": auto_publish_config}
+
+
+@app.post("/api/autopublish/run")
+async def run_autopublish_now():
+    """立即手動觸發一次自動發文"""
+    # 不用管 enabled 狀態，手動觸發永遠執行
+    original_enabled = auto_publish_config["enabled"]
+    auto_publish_config["enabled"] = True
+    try:
+        await _auto_publish_job()
+    finally:
+        auto_publish_config["enabled"] = original_enabled
+    return {"ok": True, "message": "手動發文完成"}
+
+
+@app.get("/api/autopublish/status")
+async def get_autopublish_status():
+    """取得所有帳號的發文狀況（今日）"""
+    try:
+        today = datetime.now().strftime("%Y-%m-%d")
+        logs_resp = (
+            supabase.table("auto_publish_logs")
+            .select("*")
+            .gte("created_at", f"{today}T00:00:00")
+            .order("created_at", desc=True)
+            .execute()
+        )
+        logs = logs_resp.data or []
+
+        # 建立平台+帳號統計
+        stats = {}
+        for log in logs:
+            key = f"{log['platform']}|{log['account_name']}"
+            if key not in stats:
+                stats[key] = {
+                    "platform": log["platform"],
+                    "account_name": log["account_name"],
+                    "success_count": 0,
+                    "fail_count": 0,
+                    "last_time": log["created_at"],
+                    "last_success": log["success"],
+                    "last_error": log.get("error_message"),
+                }
+            if log["success"]:
+                stats[key]["success_count"] += 1
+            else:
+                stats[key]["fail_count"] += 1
+
+        return {
+            "date": today,
+            "total_logs": len(logs),
+            "accounts": list(stats.values()),
+            "recent_logs": logs[:20],
+        }
+    except Exception as e:
+        print(f"❌ 取得發文狀況失敗: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

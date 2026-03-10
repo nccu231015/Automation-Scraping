@@ -25,7 +25,7 @@ interface SystemPrompt {
   prompt: string
 }
 
-type Tab = 'news' | 'prompts' | 'ai' | 'processed'
+type Tab = 'news' | 'prompts' | 'ai' | 'processed' | 'admin'
 
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>('news')
@@ -83,6 +83,33 @@ function App() {
   // Threads 帳號相關狀態
   const [threadsAccounts, setThreadsAccounts] = useState<Array<{ id: string, name: string }>>([])
   const [selectedThreadsAccounts, setSelectedThreadsAccounts] = useState<string[]>([])
+
+  // Admin 自動發文狀態
+  const [autoConfig, setAutoConfig] = useState<{
+    enabled: boolean
+    publish_times: string[]
+    platforms: { wordpress: boolean; facebook: boolean; instagram: boolean; threads: boolean }
+  }>({
+    enabled: false,
+    publish_times: ['09:00', '17:00'],
+    platforms: { wordpress: true, facebook: true, instagram: true, threads: true }
+  })
+  const [autoStatus, setAutoStatus] = useState<{
+    date: string
+    total_logs: number
+    accounts: Array<{
+      platform: string
+      account_name: string
+      success_count: number
+      fail_count: number
+      last_time: string
+      last_success: boolean
+      last_error: string | null
+    }>
+    recent_logs: Array<any>
+  } | null>(null)
+  const [autoRunning, setAutoRunning] = useState(false)
+  const [newPublishTime, setNewPublishTime] = useState('')
 
   // 多平台發布選擇
   const [selectedPlatforms, setSelectedPlatforms] = useState<{
@@ -194,6 +221,48 @@ function App() {
     } catch (err) {
       console.error('獲取 Threads 帳號失敗:', err)
       setThreadsAccounts([])
+    }
+  }
+
+  const fetchAutoConfig = async () => {
+    try {
+      const res = await axios.get('/api/autopublish/config')
+      setAutoConfig(res.data)
+    } catch (err) {
+      console.error('獲取自動發文設定失敗:', err)
+    }
+  }
+
+  const fetchAutoStatus = async () => {
+    try {
+      const res = await axios.get('/api/autopublish/status')
+      setAutoStatus(res.data)
+    } catch (err) {
+      console.error('獲取發文狀況失敗:', err)
+    }
+  }
+
+  const handleSaveAutoConfig = async (newConfig: typeof autoConfig) => {
+    try {
+      const res = await axios.post('/api/autopublish/config', newConfig)
+      setAutoConfig(res.data.config)
+      alert('設定已儲存！')
+    } catch (err) {
+      alert('儲存失敗')
+    }
+  }
+
+  const handleRunNow = async () => {
+    if (!confirm('確定要立即執行一次自動發文嗎？')) return
+    setAutoRunning(true)
+    try {
+      await axios.post('/api/autopublish/run')
+      alert('✅ 手動發文已完成！')
+      fetchAutoStatus()
+    } catch (err: any) {
+      alert('❌ 發文失敗：' + (err.response?.data?.detail || err.message))
+    } finally {
+      setAutoRunning(false)
     }
   }
 
@@ -1048,6 +1117,17 @@ function App() {
           onClick={() => setActiveTab('processed')}
         >
           處理後新聞列表
+        </button>
+        <button
+          className={`tab-button ${activeTab === 'admin' ? 'active' : ''}`}
+          onClick={() => {
+            setActiveTab('admin')
+            fetchAutoConfig()
+            fetchAutoStatus()
+          }}
+          style={{ background: activeTab === 'admin' ? 'linear-gradient(135deg, #f093fb, #f5576c)' : undefined }}
+        >
+          🤖 自動發文監控
         </button>
       </div>
 
@@ -2286,9 +2366,136 @@ function App() {
           </div>
         </div>
       )}
+
+      {/* ============ Admin 自動發文監控 Tab ============ */}
+      {activeTab === 'admin' && (
+        <div className="ai-section" style={{ maxWidth: '1000px', margin: '0 auto' }}>
+          <h2 style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <span>🤖</span> 自動發文監控
+          </h2>
+          <p className="ai-note">
+            全自動排程發文控制台。啟用後，系統在指定時間自動從各新聞來源隨機取 1 篇、AI 重寫後發布到各平台。
+          </p>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', marginBottom: '32px' }}>
+
+            {/* 左側：排程設定 */}
+            <div style={{ background: '#fff', borderRadius: '12px', padding: '24px', border: '1px solid #eee', boxShadow: '0 2px 8px rgba(0,0,0,0.05)' }}>
+              <h3 style={{ marginTop: 0, marginBottom: '16px', fontSize: '16px', color: '#333' }}>⏰ 排程設定</h3>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px', padding: '12px', background: autoConfig.enabled ? '#f0fff4' : '#fff5f5', borderRadius: '8px', border: `1px solid ${autoConfig.enabled ? '#9ae6b4' : '#fed7d7'}` }}>
+                <div>
+                  <div style={{ fontWeight: 600, color: autoConfig.enabled ? '#276749' : '#c53030' }}>
+                    {autoConfig.enabled ? '🟢 已啟用' : '🔴 已停用'}
+                  </div>
+                  <div style={{ fontSize: '12px', color: '#888', marginTop: '2px' }}>
+                    {autoConfig.enabled ? `${autoConfig.publish_times.length} 個時間點` : '點擊開關以啟用'}
+                  </div>
+                </div>
+                <input type="checkbox" checked={autoConfig.enabled}
+                  onChange={e => { const c = { ...autoConfig, enabled: e.target.checked }; setAutoConfig(c); handleSaveAutoConfig(c) }}
+                  style={{ width: '20px', height: '20px', cursor: 'pointer' }} />
+              </div>
+              <div style={{ marginBottom: '12px' }}>
+                <div style={{ fontSize: '13px', fontWeight: 600, color: '#555', marginBottom: '8px' }}>發文時間點</div>
+                {autoConfig.publish_times.map((t, idx) => (
+                  <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                    <span style={{ background: '#667eea', color: 'white', padding: '3px 10px', borderRadius: '20px', fontSize: '13px' }}>{t}</span>
+                    <button onClick={() => setAutoConfig({ ...autoConfig, publish_times: autoConfig.publish_times.filter((_, i) => i !== idx) })}
+                      style={{ background: 'none', border: 'none', color: '#e53e3e', cursor: 'pointer', fontSize: '16px' }}>✕</button>
+                  </div>
+                ))}
+                <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                  <input type="time" value={newPublishTime} onChange={e => setNewPublishTime(e.target.value)}
+                    style={{ padding: '6px 10px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px' }} />
+                  <button onClick={() => { if (newPublishTime && !autoConfig.publish_times.includes(newPublishTime)) { setAutoConfig({ ...autoConfig, publish_times: [...autoConfig.publish_times, newPublishTime].sort() }); setNewPublishTime('') } }}
+                    style={{ padding: '6px 12px', background: '#667eea', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '13px' }}>新增</button>
+                </div>
+              </div>
+              <button onClick={() => handleSaveAutoConfig(autoConfig)}
+                style={{ width: '100%', marginTop: '12px', padding: '10px', background: 'linear-gradient(135deg, #667eea, #764ba2)', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600 }}>
+                💾 儲存設定
+              </button>
+            </div>
+
+            {/* 右側 */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div style={{ background: '#fff', borderRadius: '12px', padding: '24px', border: '1px solid #eee', boxShadow: '0 2px 8px rgba(0,0,0,0.05)' }}>
+                <h3 style={{ marginTop: 0, marginBottom: '16px', fontSize: '16px', color: '#333' }}>📡 平台設定</h3>
+                {(['wordpress', 'facebook', 'instagram', 'threads'] as const).map(platform => {
+                  const labels: Record<string, string> = { wordpress: '🌐 WordPress', facebook: '📘 Facebook', instagram: '📸 Instagram', threads: '🧵 Threads' }
+                  return (
+                    <div key={platform} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #f0f0f0' }}>
+                      <span style={{ fontSize: '14px', fontWeight: 500 }}>{labels[platform]}</span>
+                      <input type="checkbox" checked={autoConfig.platforms[platform]}
+                        onChange={e => setAutoConfig({ ...autoConfig, platforms: { ...autoConfig.platforms, [platform]: e.target.checked } })}
+                        style={{ width: '18px', height: '18px', cursor: 'pointer' }} />
+                    </div>
+                  )
+                })}
+              </div>
+              <div style={{ background: '#fff', borderRadius: '12px', padding: '24px', border: '1px solid #eee', boxShadow: '0 2px 8px rgba(0,0,0,0.05)', textAlign: 'center' }}>
+                <h3 style={{ marginTop: 0, marginBottom: '8px', fontSize: '16px' }}>⚡ 立即測試</h3>
+                <p style={{ fontSize: '12px', color: '#888', marginBottom: '16px' }}>立即執行一次完整的自動發文流程（不受排程限制）</p>
+                <button onClick={handleRunNow} disabled={autoRunning}
+                  style={{ width: '100%', padding: '12px', background: autoRunning ? '#ccc' : 'linear-gradient(135deg, #f093fb, #f5576c)', color: 'white', border: 'none', borderRadius: '8px', cursor: autoRunning ? 'wait' : 'pointer', fontWeight: 700, fontSize: '15px' }}>
+                  {autoRunning ? '⏳ 發文中...' : '🚀 立即執行一次發文'}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* 發文狀況監控 */}
+          <div style={{ background: '#fff', borderRadius: '12px', padding: '24px', border: '1px solid #eee', boxShadow: '0 2px 8px rgba(0,0,0,0.05)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h3 style={{ margin: 0, fontSize: '16px', color: '#333' }}>
+                📊 今日發文狀況
+                {autoStatus && <span style={{ fontSize: '13px', color: '#888', marginLeft: '8px' }}>({autoStatus.date}，共 {autoStatus.total_logs} 筆)</span>}
+              </h3>
+              <button onClick={fetchAutoStatus} style={{ padding: '6px 14px', background: '#667eea', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '13px' }}>🔄 重新整理</button>
+            </div>
+            {!autoStatus ? (
+              <p style={{ color: '#888', textAlign: 'center', padding: '20px' }}>點擊「重新整理」載入資料</p>
+            ) : autoStatus.accounts.length === 0 ? (
+              <p style={{ color: '#888', textAlign: 'center', padding: '20px' }}>今日尚無自動發文記錄</p>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
+                <thead>
+                  <tr style={{ background: '#f7f8fa' }}>
+                    {['平台', '帳號', '✅ 成功', '❌ 失敗', '最後發文', '最後狀態'].map(h => (
+                      <th key={h} style={{ padding: '10px 14px', textAlign: h.includes('成功') || h.includes('失敗') ? 'center' : 'left', borderBottom: '2px solid #eee', color: '#555' }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {autoStatus.accounts.map((acc, idx) => {
+                    const colors: Record<string, string> = { wordpress: '#21759b', facebook: '#1877f2', instagram: '#e4405f', threads: '#000' }
+                    return (
+                      <tr key={idx} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                        <td style={{ padding: '10px 14px' }}>
+                          <span style={{ background: colors[acc.platform] || '#888', color: 'white', padding: '2px 8px', borderRadius: '10px', fontSize: '12px', fontWeight: 600 }}>{acc.platform}</span>
+                        </td>
+                        <td style={{ padding: '10px 14px', fontWeight: 500 }}>{acc.account_name}</td>
+                        <td style={{ padding: '10px 14px', textAlign: 'center', color: '#276749', fontWeight: 700 }}>{acc.success_count}</td>
+                        <td style={{ padding: '10px 14px', textAlign: 'center', color: '#c53030', fontWeight: 700 }}>{acc.fail_count}</td>
+                        <td style={{ padding: '10px 14px', fontSize: '12px', color: '#666' }}>{new Date(acc.last_time).toLocaleTimeString('zh-TW')}</td>
+                        <td style={{ padding: '10px 14px' }}>
+                          {acc.last_success
+                            ? <span style={{ color: '#276749', fontWeight: 600 }}>✅ 成功</span>
+                            : <span style={{ color: '#c53030', fontSize: '12px' }} title={acc.last_error || ''}> ❌ {acc.last_error ? acc.last_error.substring(0, 40) + '...' : '失敗'}</span>}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
 export default App
+
 
