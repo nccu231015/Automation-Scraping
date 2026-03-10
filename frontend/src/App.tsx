@@ -109,6 +109,7 @@ function App() {
     recent_logs: Array<any>
   } | null>(null)
   const [autoRunning, setAutoRunning] = useState(false)
+  const [autoStatusLoading, setAutoStatusLoading] = useState(false)
   const [newPublishTime, setNewPublishTime] = useState('')
 
   // 多平台發布選擇
@@ -234,11 +235,15 @@ function App() {
   }
 
   const fetchAutoStatus = async () => {
+    setAutoStatusLoading(true)
     try {
       const res = await axios.get('/api/autopublish/status')
       setAutoStatus(res.data)
-    } catch (err) {
-      console.error('獲取發文狀況失敗:', err)
+    } catch (err: any) {
+      const msg = err.response?.data?.detail || err.message
+      alert('❌ 載入發文狀況失敗：' + msg + '\n\n（請確認 Supabase auto_publish_logs 表格已建立）')
+    } finally {
+      setAutoStatusLoading(false)
     }
   }
 
@@ -2451,7 +2456,7 @@ function App() {
                 📊 今日發文狀況
                 {autoStatus && <span style={{ fontSize: '13px', color: '#888', marginLeft: '8px' }}>({autoStatus.date}，共 {autoStatus.total_logs} 筆)</span>}
               </h3>
-              <button onClick={fetchAutoStatus} style={{ padding: '6px 14px', background: '#667eea', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '13px' }}>🔄 重新整理</button>
+              <button onClick={fetchAutoStatus} disabled={autoStatusLoading} style={{ padding: '6px 14px', background: autoStatusLoading ? '#aaa' : '#667eea', color: 'white', border: 'none', borderRadius: '6px', cursor: autoStatusLoading ? 'wait' : 'pointer', fontSize: '13px' }}>{autoStatusLoading ? '⏳ 載入中...' : '🔄 重新整理'}</button>
             </div>
             {!autoStatus ? (
               <p style={{ color: '#888', textAlign: 'center', padding: '20px' }}>點擊「重新整理」載入資料</p>
