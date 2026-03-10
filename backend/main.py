@@ -2414,12 +2414,6 @@ async def delete_prompt(prompt_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-if __name__ == "__main__":
-    import uvicorn
-
-    uvicorn.run(app, host="0.0.0.0", port=8000)
-
-
 # ============================================================
 # 自動發文排程模組
 # ============================================================
@@ -2987,3 +2981,9 @@ async def get_autopublish_status():
     except Exception as e:
         print(f"❌ 取得發文狀況失敗: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(app, host="0.0.0.0", port=8000)
