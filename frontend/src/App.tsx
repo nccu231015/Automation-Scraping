@@ -261,7 +261,7 @@ function App() {
     if (!confirm('確定要立即執行一次自動發文嗎？')) return
     setAutoRunning(true)
     try {
-      await axios.post('/api/autopublish/run')
+      await axios.post('/api/autopublish/run', { platforms: autoConfig.platforms })
       alert('✅ 手動發文已完成！')
       fetchAutoStatus()
     } catch (err: any) {

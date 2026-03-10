@@ -2463,13 +2463,13 @@ def _save_auto_publish_log(
         print(f"⚠️ 儲存自動發文 log 失敗: {e}")
 
 
-async def _auto_publish_job():
+async def _auto_publish_job(override_config: dict = None):
     """自動發文主流程"""
     print("\n" + "=" * 80)
     print(f"🤖 自動發文工作開始 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 80)
 
-    config = auto_publish_config
+    config = override_config if override_config is not None else auto_publish_config
     if not config["enabled"]:
         print("⏸ 自動發文已停用")
         return
@@ -2568,13 +2568,22 @@ async def _auto_publish_job():
             title_mod = title
             content_mod = content
 
-        # 取得圖片
+        # 取得圖片 (安全防呆，避免 URL 變成 dict 而引發 FB/IG 400 error)
         image_url = None
         if images:
             try:
                 imgs = json.loads(images) if isinstance(images, str) else images
                 if isinstance(imgs, list) and len(imgs) > 0:
-                    image_url = imgs[0]
+                    first_img = imgs[0]
+                    image_url = (
+                        first_img.get("url") or first_img.get("src")
+                        if isinstance(first_img, dict)
+                        else str(first_img)
+                    )
+                elif isinstance(imgs, dict):
+                    image_url = imgs.get("url") or imgs.get("src")
+                elif isinstance(imgs, str):
+                    image_url = imgs
             except Exception:
                 pass
 
@@ -2927,15 +2936,30 @@ async def set_autopublish_config(config: dict):
 
 
 @app.post("/api/autopublish/run")
-async def run_autopublish_now():
+async def run_autopublish_now(request: Request):
     """立即手動觸發一次自動發文"""
-    # 不用管 enabled 狀態，手動觸發永遠執行
-    original_enabled = auto_publish_config["enabled"]
-    auto_publish_config["enabled"] = True
+    # 嘗試讀取前端傳來的平台設定
+    body = {}
     try:
-        await _auto_publish_job()
-    finally:
-        auto_publish_config["enabled"] = original_enabled
+        body = await request.json()
+    except Exception:
+        pass
+
+    # 複製全局設定做為本次執行的依據
+    run_config = {
+        "enabled": True,  # 手動觸發永遠執行
+        "publish_times": auto_publish_config.get("publish_times", []),
+        "platforms": auto_publish_config["platforms"].copy(),
+    }
+
+    # 如果前端有傳來 platforms，則套用前端的選擇
+    if "platforms" in body:
+        run_config["platforms"] = body["platforms"]
+
+    try:
+        await _auto_publish_job(run_config)
+    except Exception as e:
+        print(f"手動發文執行發生例外: {e}")
     return {"ok": True, "message": "手動發文完成"}
 
 
