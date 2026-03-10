@@ -207,18 +207,42 @@ else:
     for acc_id, acc in facebook_accounts.items():
         print(f"   📍 {acc['name']}")
 
-# Threads 配置初始化
-threads_user_id = os.getenv("THREADS_USER_ID")
-threads_access_token = os.getenv("THREADS_ACCESS_TOKEN")
+# Threads 配置 - 多帳號模式
+threads_accounts = {}
+threads_configured = False
 threads_app_secret = os.getenv("THREADS_APP_SECRET")
 
-if not all([threads_user_id, threads_access_token, threads_app_secret]):
-    print("⚠️ 警告: 未設定完整的 Threads 配置，發布到 Threads 功能將無法使用")
-    threads_configured = False
+for i in range(1, 7):
+    t_name = os.getenv(f"THREADS_NAME_{i}")
+    t_user_id = os.getenv(f"THREADS_USER_ID_{i}")
+    t_access_token = os.getenv(f"THREADS_ACCESS_TOKEN_{i}")
+
+    # 兼容舊版單一帳號配置
+    if i == 1 and not t_user_id:
+        t_user_id = os.getenv("THREADS_USER_ID")
+        t_access_token = os.getenv("THREADS_ACCESS_TOKEN")
+        t_name = t_name or "Threads 帳號 1"
+
+    if t_user_id and t_access_token and threads_app_secret:
+        threads_accounts[t_user_id] = {
+            "id": t_user_id,
+            "name": t_name or f"Threads 帳號 {i}",
+            "token": t_access_token,
+        }
+        threads_configured = True
+
+# 保留舊版變數供 refresh function 使用
+threads_user_id = os.getenv("THREADS_USER_ID_1") or os.getenv("THREADS_USER_ID")
+threads_access_token = os.getenv("THREADS_ACCESS_TOKEN_1") or os.getenv(
+    "THREADS_ACCESS_TOKEN"
+)
+
+if threads_configured:
+    print(f"✅ Threads 配置已載入 ({len(threads_accounts)} 個帳號)")
+    for tid, acc in threads_accounts.items():
+        print(f"   📍 {acc['name']} (ID: {tid})")
 else:
-    threads_configured = True
-    print("✅ Threads 配置已載入")
-    print(f"📍 Threads User ID: {threads_user_id}")
+    print("⚠️ 警告: 未設定完整的 Threads 配置，發布到 Threads 功能將無法使用")
 
 # Token 元數據存儲 (遷移到 Supabase 以支持 Cloud Run 無狀態部署)
 SETTINGS_TABLE = "app_settings"
@@ -270,10 +294,14 @@ def parse_stored_time(time_str):
     return None
 
 
-threads_token_data = {
-    "access_token": threads_access_token,
-    "last_refresh": parse_stored_time(stored_metadata.get("threads_last_refresh")),
-    "expires_in": 5184000,  # 60天（秒）
+# Threads 多帳號 token 快取 (key = user_id)
+threads_token_cache = {
+    uid: {
+        "access_token": acc["token"],
+        "last_refresh": parse_stored_time(stored_metadata.get("threads_last_refresh")),
+        "expires_in": 5184000,
+    }
+    for uid, acc in threads_accounts.items()
 }
 
 # Instagram 配置初始化 (多帳號支援)
@@ -428,11 +456,13 @@ class FacebookPublishResult(BaseModel):
 
 class ThreadsPublishRequest(BaseModel):
     items: List[PublishItem]
+    account_ids: Optional[List[str]] = None  # 多帳號發布
 
 
 class ThreadsPublishResult(BaseModel):
     news_id: int
     news_url: str
+    account_name: Optional[str] = None  # 帳號名稱
     threads_post_id: Optional[str] = None
     threads_post_url: Optional[str] = None
     success: bool
@@ -1656,28 +1686,34 @@ async def publish_to_instagram(request: InstagramPublishRequest):
 
 
 # Threads 相關功能
-def refresh_threads_token():
-    """刷新 Threads Access Token（如果需要）"""
-    global threads_token_data
+def refresh_threads_token_for_account(user_id: str, current_token: str) -> str:
+    """刷新特定 Threads 帳號的 Access Token（如果需要）"""
+    global threads_token_cache
+
+    cache = threads_token_cache.get(
+        user_id,
+        {
+            "access_token": current_token,
+            "last_refresh": None,
+            "expires_in": 5184000,
+        },
+    )
 
     # 檢查是否需要刷新
-    if threads_token_data["last_refresh"] is not None:
-        time_since_refresh = datetime.now() - threads_token_data["last_refresh"]
-        # 如果距離上次刷新不到59天，不需要刷新
-        if time_since_refresh.total_seconds() < (
-            threads_token_data["expires_in"] - 86400  # 提前1天刷新
-        ):
-            print("✅ Threads Token 仍然有效，無需刷新")
-            return threads_token_data["access_token"]
+    if cache["last_refresh"] is not None:
+        time_since_refresh = datetime.now() - cache["last_refresh"]
+        if time_since_refresh.total_seconds() < (cache["expires_in"] - 86400):
+            print(f"✅ Threads Token ({user_id[:8]}...) 仍然有效，無需刷新")
+            return cache["access_token"]
 
-    print("🔄 正在刷新 Threads Access Token...")
+    print(f"🔄 正在刷新 Threads Access Token ({user_id[:8]}...)...")
 
     try:
         refresh_url = "https://graph.threads.net/access_token"
         params = {
             "grant_type": "th_exchange_token",
             "client_secret": threads_app_secret,
-            "access_token": threads_token_data["access_token"],
+            "access_token": cache["access_token"],
         }
 
         response = requests.get(refresh_url, params=params, timeout=30)
@@ -1685,31 +1721,40 @@ def refresh_threads_token():
         if response.status_code == 200:
             data = response.json()
             new_token = data.get("access_token")
-            expires_in = data.get("expires_in", 5184000)  # 預設60天
+            expires_in = data.get("expires_in", 5184000)
 
             if new_token:
-                threads_token_data["access_token"] = new_token
-                threads_token_data["last_refresh"] = datetime.now()
-                threads_token_data["expires_in"] = expires_in
+                threads_token_cache[user_id] = {
+                    "access_token": new_token,
+                    "last_refresh": datetime.now(),
+                    "expires_in": expires_in,
+                }
 
-                # 保存元數據到文件
+                # 保存元數據
                 metadata = load_token_metadata()
                 metadata["threads_last_refresh"] = datetime.now().isoformat()
                 save_token_metadata(metadata)
 
-                print(
-                    f"✅ Threads Token 刷新成功，有效期：{expires_in}秒（{expires_in / 86400:.0f}天）"
-                )
+                print(f"✅ Threads Token 刷新成功（{expires_in / 86400:.0f}天）")
                 return new_token
 
         print(f"⚠️ Threads Token 刷新失敗: {response.status_code} - {response.text}")
-        # 刷新失敗時，繼續使用舊 token
-        return threads_token_data["access_token"]
+        return cache["access_token"]
 
     except Exception as e:
         print(f"⚠️ Threads Token 刷新異常: {str(e)}")
-        # 異常時，繼續使用舊 token
-        return threads_token_data["access_token"]
+        return cache["access_token"]
+
+
+@app.get("/api/threads-accounts")
+async def get_threads_accounts():
+    """取得所有設定的 Threads 帳號列表"""
+    if not threads_configured:
+        return {"accounts": []}
+    accounts_list = [
+        {"id": acc["id"], "name": acc["name"]} for acc in threads_accounts.values()
+    ]
+    return {"accounts": accounts_list}
 
 
 @app.post("/api/threads-publish")
@@ -1718,30 +1763,51 @@ async def publish_to_threads(request: ThreadsPublishRequest):
     if not threads_configured:
         raise HTTPException(
             status_code=503,
-            detail="Threads 配置未設定，請在 .env 檔案中設定 THREADS_USER_ID, THREADS_ACCESS_TOKEN, THREADS_APP_SECRET",
+            detail="Threads 配置未設定，請在 .env 檔案中設定 THREADS_USER_ID_i, THREADS_ACCESS_TOKEN_i, THREADS_APP_SECRET",
         )
 
     if not request.items:
         raise HTTPException(status_code=400, detail="至少需要一則新聞")
 
-    # 刷新 token（如果需要）
-    current_token = refresh_threads_token()
+    # 決定要使用哪些帳號
+    if getattr(request, "account_ids", None):
+        valid_accounts = [
+            threads_accounts[aid]
+            for aid in request.account_ids
+            if aid in threads_accounts
+        ]
+    else:
+        valid_accounts = list(threads_accounts.values())
+
+    if not valid_accounts:
+        raise HTTPException(status_code=400, detail="找不到任何有效的 Threads 帳號")
 
     results = []
 
+    # 建立任務列表：每個帳號 * 每則新聞
+    tasks = [(acc, item) for acc in valid_accounts for item in request.items]
+
     print("\n" + "=" * 80)
     print("🚀 開始發布到 Threads")
-    print(f"📊 總計：{len(request.items)} 則新聞")
+    print(
+        f"📊 總計任務數：{len(tasks)} (帳號: {len(valid_accounts)}, 新聞: {len(request.items)})"
+    )
     print("=" * 80 + "\n")
 
-    # 處理每則新聞
-    for idx, item_data in enumerate(request.items, 1):
+    # 處理每個任務
+    for idx, (account, item_data) in enumerate(tasks, 1):
         news_id = item_data.news_id
         selected_image = item_data.selected_image
+        account_user_id = account["id"]
+        # 刷新該帳號的 token（如果需要）
+        current_token = refresh_threads_token_for_account(
+            account_user_id, account["token"]
+        )
 
         try:
             print(f"\n{'─' * 80}")
-            print(f"📰 處理第 {idx}/{len(request.items)} 則新聞")
+            print(f"📰 處理第 {idx}/{len(tasks)} 項任務")
+            print(f"👤 帳號: {account['name']}")
             print(f"🆔 新聞 ID: {news_id}")
             if selected_image:
                 print(f"🖼️  指定圖片: {selected_image}")
@@ -1819,7 +1885,7 @@ async def publish_to_threads(request: ThreadsPublishRequest):
             print("📤 正在創建 Threads Container...")
             print(f"🖼️  圖片 URL: {image_to_use}")
 
-            create_url = f"https://graph.threads.net/v1.0/{threads_user_id}/threads"
+            create_url = f"https://graph.threads.net/v1.0/{account_user_id}/threads"
             create_data = {
                 "media_type": "IMAGE",
                 "image_url": image_to_use,
@@ -1845,7 +1911,7 @@ async def publish_to_threads(request: ThreadsPublishRequest):
             print("📤 正在發布 Threads 貼文...")
 
             publish_url = (
-                f"https://graph.threads.net/v1.0/{threads_user_id}/threads_publish"
+                f"https://graph.threads.net/v1.0/{account_user_id}/threads_publish"
             )
             publish_data = {"creation_id": container_id, "access_token": current_token}
 
@@ -1869,6 +1935,7 @@ async def publish_to_threads(request: ThreadsPublishRequest):
                     ThreadsPublishResult(
                         news_id=news_id,
                         news_url=news_url,
+                        account_name=account["name"],
                         threads_post_id=threads_post_id,
                         threads_post_url=threads_post_url,
                         success=True,
@@ -1892,6 +1959,7 @@ async def publish_to_threads(request: ThreadsPublishRequest):
                     news_url=news_item.get("url", "")
                     if "news_item" in locals()
                     else "",
+                    account_name=account["name"],
                     threads_post_id=None,
                     threads_post_url=None,
                     success=False,

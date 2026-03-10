@@ -76,9 +76,13 @@ function App() {
   const [facebookAccounts, setFacebookAccounts] = useState<Array<{ id: string, name: string }>>([])
   const [selectedFacebookAccounts, setSelectedFacebookAccounts] = useState<string[]>([])
 
-  // Instagram 帳號相關狀態 (新增)
+  // Instagram 帳號相關狀態
   const [instagramAccounts, setInstagramAccounts] = useState<Array<{ id: string, name: string }>>([])
   const [selectedInstagramAccounts, setSelectedInstagramAccounts] = useState<string[]>([])
+
+  // Threads 帳號相關狀態
+  const [threadsAccounts, setThreadsAccounts] = useState<Array<{ id: string, name: string }>>([])
+  const [selectedThreadsAccounts, setSelectedThreadsAccounts] = useState<string[]>([])
 
   // 多平台發布選擇
   const [selectedPlatforms, setSelectedPlatforms] = useState<{
@@ -123,6 +127,11 @@ function App() {
   // 獲取 Instagram 帳號列表
   useEffect(() => {
     fetchInstagramAccounts()
+  }, [])
+
+  // 獲取 Threads 帳號列表
+  useEffect(() => {
+    fetchThreadsAccounts()
   }, [])
 
   const fetchSystemPrompts = async () => {
@@ -172,6 +181,19 @@ function App() {
     } catch (err) {
       console.error('獲取 Instagram 帳號失敗:', err)
       setInstagramAccounts([])
+    }
+  }
+
+  const fetchThreadsAccounts = async () => {
+    try {
+      const response = await axios.get<{ accounts: Array<{ id: string, name: string }> }>('/api/threads-accounts')
+      setThreadsAccounts(response.data.accounts)
+      if (response.data.accounts.length > 0) {
+        setSelectedThreadsAccounts([response.data.accounts[0].id])
+      }
+    } catch (err) {
+      console.error('獲取 Threads 帳號失敗:', err)
+      setThreadsAccounts([])
     }
   }
 
@@ -762,7 +784,8 @@ function App() {
       console.log('發布新聞到 Threads，Items:', publishItems)
 
       const response = await axios.post('/api/threads-publish', {
-        items: publishItems
+        items: publishItems,
+        account_ids: selectedThreadsAccounts
       })
 
       const { total, success, failed, results } = response.data
@@ -1831,11 +1854,46 @@ function App() {
                                     <input
                                       type="checkbox"
                                       checked={selectedPlatforms.threads}
-                                      onChange={(e) => setSelectedPlatforms({ ...selectedPlatforms, threads: e.target.checked })}
+                                      onChange={(e) => {
+                                        setSelectedPlatforms({ ...selectedPlatforms, threads: e.target.checked });
+                                        if (e.target.checked && threadsAccounts.length > 0) {
+                                          setSelectedThreadsAccounts(threadsAccounts.map(acc => acc.id));
+                                        } else {
+                                          setSelectedThreadsAccounts([]);
+                                        }
+                                      }}
                                       style={{ cursor: 'pointer', width: '18px', height: '18px' }}
                                     />
                                     <span style={{ fontWeight: 500, color: '#000000', marginLeft: '8px' }}>Threads</span>
                                   </label>
+
+                                  {selectedPlatforms.threads && threadsAccounts.length > 0 && (
+                                    <div style={{ paddingLeft: '26px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                      {threadsAccounts.map(account => (
+                                        <label key={account.id} style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', fontSize: '14px' }}>
+                                          <input
+                                            type="checkbox"
+                                            checked={selectedThreadsAccounts.includes(account.id)}
+                                            onChange={(e) => {
+                                              if (e.target.checked) {
+                                                setSelectedThreadsAccounts([...selectedThreadsAccounts, account.id]);
+                                              } else {
+                                                setSelectedThreadsAccounts(selectedThreadsAccounts.filter(id => id !== account.id));
+                                              }
+                                            }}
+                                            style={{ cursor: 'pointer', marginRight: '8px' }}
+                                          />
+                                          {account.name}
+                                        </label>
+                                      ))}
+                                    </div>
+                                  )}
+
+                                  {selectedPlatforms.threads && threadsAccounts.length === 0 && (
+                                    <div style={{ paddingLeft: '26px', fontSize: '12px', color: '#999', fontStyle: 'italic' }}>
+                                      未設定帳號
+                                    </div>
+                                  )}
                                 </div>
 
                                 {/* Instagram */}
