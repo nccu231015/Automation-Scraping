@@ -2521,9 +2521,12 @@ async def _auto_publish_job(override_config: dict = None):
         print(f"❌ 取得新聞失敗: {e}")
         return
 
-    # 3. AI 重寫 + 發文
+    # 3. AI 重寫 + 收集要發布的項目
     full_system_prompt = test_prompt_text
     full_system_prompt += '\n\n## 輸出格式要求\n你必須嚴格按照以下 JSON 格式輸出，不要包含任何其他文字：\n```json\n{\n  "title_modified": "重新撰寫的標題",\n  "content_modified": "重新撰寫的內容"\n}\n```'
+
+    publish_items = []
+    news_metadata = {}
 
     for news_item in selected_news:
         news_id = news_item["id"]
@@ -2534,6 +2537,8 @@ async def _auto_publish_job(override_config: dict = None):
 
         print(f"\n── 處理新聞 ID: {news_id} | 來源: {source_website} ──")
 
+        title_mod = title
+        content_mod = content
         # AI 重寫
         try:
             ai_response = openai_client.chat.completions.create(
@@ -2565,10 +2570,8 @@ async def _auto_publish_job(override_config: dict = None):
             print(f"✅ AI 重寫完成: {title_mod[:40]}...")
         except Exception as e:
             print(f"❌ AI 重寫失敗: {e}")
-            title_mod = title
-            content_mod = content
 
-        # 取得圖片 (安全防呆，避免 URL 變成 dict 而引發 FB/IG 400 error)
+        # 取得圖片 (安全防呆，加上協定修正避免 Meta aspect ratio null error)
         image_url = None
         if images:
             try:
@@ -2584,313 +2587,112 @@ async def _auto_publish_job(override_config: dict = None):
                     image_url = imgs.get("url") or imgs.get("src")
                 elif isinstance(imgs, str):
                     image_url = imgs
+
+                # 自動修正協定
+                if image_url and image_url.startswith("//"):
+                    image_url = "https:" + image_url
             except Exception:
                 pass
 
-        pub_item = {"news_id": news_id, "selected_image": image_url}
+        publish_items.append(PublishItem(news_id=news_id, selected_image=image_url))
+        news_metadata[news_id] = {"title": title_mod, "source": source_website}
 
-        # 4. 依設定對各平台發文
+    # 4. 依照 config 所選平台調用半自動 API
+    if not publish_items:
+        print("💡 目前無有效的發文項目，結束工作。")
+        return
 
-        # WordPress
-        if config["platforms"].get("wordpress") and wordpress_configured:
-            for acc_id, acc in wordpress_accounts.items():
-                acc_name = acc.get("name", acc_id)
-                try:
-                    wp_url = acc["url"]
-                    credentials = f"{acc['username']}:{acc['password']}"
-                    token = base64.b64encode(credentials.encode()).decode()
-                    headers = {
-                        "Authorization": f"Basic {token}",
-                        "Content-Type": "application/json",
-                    }
+    # WordPress
+    if config["platforms"].get("wordpress") and wordpress_configured:
+        print("\n🚀 自動發佈 - 啟動 WordPress")
+        try:
+            wp_req = WordPressPublishRequest(
+                account_ids=list(wordpress_accounts.keys()), items=publish_items
+            )
+            wp_res = await publish_to_wordpress(wp_req)
+            for res in wp_res.get("results", []):
+                meta = news_metadata.get(res.news_id, {})
+                _save_auto_publish_log(
+                    res.news_id,
+                    meta.get("title"),
+                    meta.get("source"),
+                    "wordpress",
+                    res.account_name,
+                    res.success,
+                    res.error,
+                    res.wordpress_post_url,
+                )
+        except Exception as e:
+            print(f"❌ WordPress 自動發布崩潰: {e}")
 
-                    # 嘗試上傳圖片到 WP media library
-                    featured_media_id = None
-                    if image_url:
-                        try:
-                            featured_media_id = await upload_image_to_wordpress(
-                                image_url, wp_url, headers
-                            )
-                        except Exception as img_e:
-                            print(f"  ⚠️ WordPress [{acc_name}] 圖片上傳失敗: {img_e}")
+    # Facebook
+    if config["platforms"].get("facebook") and facebook_configured:
+        print("\n🚀 自動發佈 - 啟動 Facebook")
+        try:
+            fb_req = FacebookPublishRequest(
+                account_ids=list(facebook_accounts.keys()), items=publish_items
+            )
+            fb_res = await publish_to_facebook(fb_req)
+            for res in fb_res.get("results", []):
+                meta = news_metadata.get(res.news_id, {})
+                _save_auto_publish_log(
+                    res.news_id,
+                    meta.get("title"),
+                    meta.get("source"),
+                    "facebook",
+                    res.account_name,
+                    res.success,
+                    res.error,
+                    res.facebook_post_url,
+                )
+        except Exception as e:
+            print(f"❌ Facebook 自動發布崩潰: {e}")
 
-                    # 加入來源連結
-                    news_url_link = news_item.get("url", "")
-                    content_with_source = title_mod + "\n\n" + (content_mod or "")
-                    if news_url_link:
-                        content_with_source += f"\n\n<p><small>原始來源: <a href='{news_url_link}' target='_blank'>{news_url_link}</a></small></p>"
+    # Instagram
+    if config["platforms"].get("instagram") and instagram_configured:
+        print("\n🚀 自動發佈 - 啟動 Instagram")
+        try:
+            ig_req = InstagramPublishRequest(
+                account_ids=list(instagram_accounts.keys()), items=publish_items
+            )
+            ig_res = await publish_to_instagram(ig_req)
+            for res in ig_res.get("results", []):
+                meta = news_metadata.get(res.news_id, {})
+                _save_auto_publish_log(
+                    res.news_id,
+                    meta.get("title"),
+                    meta.get("source"),
+                    "instagram",
+                    res.account_name,
+                    res.success,
+                    res.error,
+                    res.instagram_post_url,
+                )
+        except Exception as e:
+            print(f"❌ Instagram 自動發布崩潰: {e}")
 
-                    post_data: dict = {
-                        "title": title_mod,
-                        "content": content_with_source,
-                        "status": "publish",
-                        "format": "standard",
-                    }
-                    if featured_media_id:
-                        post_data["featured_media"] = featured_media_id
-
-                    wp_resp = requests.post(
-                        f"{wp_url.rstrip('/')}/wp-json/wp/v2/posts",
-                        json=post_data,
-                        headers=headers,
-                        timeout=30,
-                    )
-                    ok = wp_resp.status_code in (200, 201)
-                    post_link = wp_resp.json().get("link") if ok else None
-                    err_msg = (
-                        None
-                        if ok
-                        else f"HTTP {wp_resp.status_code}: {wp_resp.text[:200]}"
-                    )
-                    _save_auto_publish_log(
-                        news_id,
-                        title_mod,
-                        source_website,
-                        "wordpress",
-                        acc_name,
-                        ok,
-                        err_msg,
-                        post_link,
-                    )
-                    print(
-                        f"  {'\u2705' if ok else '\u274c'} WordPress [{acc_name}]{'' if ok else f' -> {err_msg}'}"
-                    )
-                except Exception as e:
-                    _save_auto_publish_log(
-                        news_id,
-                        title_mod,
-                        source_website,
-                        "wordpress",
-                        acc_name,
-                        False,
-                        str(e),
-                    )
-                    print(f"  ❌ WordPress [{acc_name}] 例外: {e}")
-
-        # Facebook — 對齊半自動版本 (v24.0, params=, 含來源連結)
-        if config["platforms"].get("facebook") and facebook_configured:
-            for acc_id, acc in facebook_accounts.items():
-                acc_name = acc.get("name", acc_id)
-                try:
-                    page_id = acc["id"]
-                    page_token = acc["token"]
-
-                    # 換取 Page Access Token
-                    try:
-                        pt_resp = requests.get(
-                            f"https://graph.facebook.com/v24.0/{page_id}",
-                            params={
-                                "fields": "access_token",
-                                "access_token": page_token,
-                            },
-                            timeout=10,
-                        )
-                        if pt_resp.status_code == 200:
-                            pt = pt_resp.json().get("access_token")
-                            if pt:
-                                page_token = pt
-                    except Exception as pt_e:
-                        print(f"  ⚠️ Facebook [{acc_name}] 取 Page Token 失敗: {pt_e}")
-
-                    news_url_link = news_item.get("url", "")
-                    caption = f"{title_mod}\n\n{content_mod}"
-                    if news_url_link:
-                        caption += f"\n\n原始來源: {news_url_link}"
-
-                    if image_url:
-                        fb_resp = requests.post(
-                            f"https://graph.facebook.com/v24.0/{page_id}/photos",
-                            data={
-                                "url": image_url,
-                                "caption": caption,
-                                "access_token": page_token,
-                            },
-                            timeout=30,
-                        )
-                    else:
-                        fb_resp = requests.post(
-                            f"https://graph.facebook.com/v24.0/{page_id}/feed",
-                            data={"message": caption, "access_token": page_token},
-                            timeout=30,
-                        )
-
-                    ok = fb_resp.status_code == 200
-                    try:
-                        fb_err = fb_resp.json().get("error", {})
-                        err_msg = (
-                            None
-                            if ok
-                            else f"HTTP {fb_resp.status_code}: {fb_err.get('message', fb_resp.text[:150])}"
-                        )
-                    except Exception:
-                        err_msg = (
-                            None
-                            if ok
-                            else f"HTTP {fb_resp.status_code}: {fb_resp.text[:200]}"
-                        )
-
-                    _save_auto_publish_log(
-                        news_id,
-                        title_mod,
-                        source_website,
-                        "facebook",
-                        acc_name,
-                        ok,
-                        err_msg,
-                    )
-                    print(
-                        f"  {'\u2705' if ok else '\u274c'} Facebook [{acc_name}]{'' if ok else f' -> {err_msg}'}"
-                    )
-                except Exception as e:
-                    _save_auto_publish_log(
-                        news_id,
-                        title_mod,
-                        source_website,
-                        "facebook",
-                        acc_name,
-                        False,
-                        str(e),
-                    )
-                    print(f"  ❌ Facebook [{acc_name}] 例外: {e}")
-
-        # Instagram — 對齊半自動版本 (v21.0, token刷新, sleep 5s, 2200字截斷)
-        if config["platforms"].get("instagram") and instagram_configured and image_url:
-            for acc_id, acc in instagram_accounts.items():
-                acc_name = acc.get("name", acc_id)
-                try:
-                    ig_id = acc["id"]
-                    ig_token = refresh_instagram_token_for_account(ig_id)
-
-                    news_url_link = news_item.get("url", "")
-                    caption = f"{title_mod}\n\n{content_mod}"
-                    if news_url_link:
-                        caption += f"\n\n🔗 {news_url_link}"
-                    if len(caption) > 2200:
-                        caption = caption[:2197] + "..."
-
-                    # Step 1: 創建 media container
-                    c_resp = requests.post(
-                        f"https://graph.facebook.com/v21.0/{ig_id}/media",
-                        data={
-                            "image_url": image_url,
-                            "caption": caption,
-                            "access_token": ig_token,
-                        },
-                        timeout=30,
-                    )
-                    if c_resp.status_code != 200:
-                        try:
-                            err_data = c_resp.json()
-                            err_code = err_data.get("error", {}).get("code")
-                            err_subcode = err_data.get("error", {}).get("error_subcode")
-                            if err_code == 36003 and err_subcode == 2207009:
-                                raise ValueError(
-                                    "IG 圖片長寬比例不符 (必須介於 4:5 至 1.91:1 之間)"
-                                )
-                        except Exception as parse_e:
-                            pass
-                        raise ValueError(
-                            f"IG 容器創建失敗: {c_resp.status_code} - {c_resp.text}"
-                        )
-
-                    container_id = c_resp.json().get("id")
-                    if not container_id:
-                        raise ValueError("IG 無法取得 creation_id")
-
-                    # Step 2: 等待 Meta 處理
-                    time.sleep(5)
-
-                    # Step 3: 發布
-                    p_resp = requests.post(
-                        f"https://graph.facebook.com/v21.0/{ig_id}/media_publish",
-                        data={"creation_id": container_id, "access_token": ig_token},
-                        timeout=30,
-                    )
-                    ok = p_resp.status_code == 200
-                    if ok:
-                        err_msg = None
-                    else:
-                        try:
-                            err_msg = f"HTTP {p_resp.status_code}: {p_resp.json().get('error', {}).get('message', p_resp.text[:150])}"
-                        except Exception:
-                            err_msg = f"HTTP {p_resp.status_code}: {p_resp.text[:200]}"
-                    _save_auto_publish_log(
-                        news_id,
-                        title_mod,
-                        source_website,
-                        "instagram",
-                        acc_name,
-                        ok,
-                        err_msg,
-                    )
-                    print(
-                        f"  {'\u2705' if ok else '\u274c'} Instagram [{acc_name}]{'' if ok else f' -> {err_msg}'}"
-                    )
-                except Exception as e:
-                    _save_auto_publish_log(
-                        news_id,
-                        title_mod,
-                        source_website,
-                        "instagram",
-                        acc_name,
-                        False,
-                        str(e),
-                    )
-                    print(f"  ❌ Instagram [{acc_name}] 例外: {e}")
-
-        # Threads
-        if config["platforms"].get("threads") and threads_configured and image_url:
-            for acc_id, acc in threads_accounts.items():
-                try:
-                    t_token = refresh_threads_token_for_account(acc["id"], acc["token"])
-                    text = f"{title_mod}\n\n{content_mod[:400]}"
-                    if len(text) > 500:
-                        text = text[:497] + "..."
-                    c_resp = requests.post(
-                        f"https://graph.threads.net/v1.0/{acc['id']}/threads",
-                        data={
-                            "media_type": "IMAGE",
-                            "image_url": image_url,
-                            "text": text,
-                            "access_token": t_token,
-                        },
-                        timeout=30,
-                    )
-                    ok = False
-                    if c_resp.status_code == 200:
-                        container_id = c_resp.json().get("id")
-                        if container_id:
-                            p_resp = requests.post(
-                                f"https://graph.threads.net/v1.0/{acc['id']}/threads_publish",
-                                data={
-                                    "creation_id": container_id,
-                                    "access_token": t_token,
-                                },
-                                timeout=30,
-                            )
-                            ok = p_resp.status_code == 200
-                    _save_auto_publish_log(
-                        news_id,
-                        title_mod,
-                        source_website,
-                        "threads",
-                        acc.get("name", acc_id),
-                        ok,
-                        None if ok else c_resp.text[:200],
-                    )
-                    print(
-                        f"  {'\u2705' if ok else '\u274c'} Threads [{acc.get('name')}]"
-                    )
-                except Exception as e:
-                    _save_auto_publish_log(
-                        news_id,
-                        title_mod,
-                        source_website,
-                        "threads",
-                        acc.get("name", acc_id),
-                        False,
-                        str(e),
-                    )
+    # Threads
+    if config["platforms"].get("threads") and threads_configured:
+        print("\n🚀 自動發佈 - 啟動 Threads")
+        try:
+            th_req = ThreadsPublishRequest(
+                account_ids=list(threads_accounts.keys()), items=publish_items
+            )
+            th_res = await publish_to_threads(th_req)
+            for res in th_res.get("results", []):
+                meta = news_metadata.get(res.news_id, {})
+                _save_auto_publish_log(
+                    res.news_id,
+                    meta.get("title"),
+                    meta.get("source"),
+                    "threads",
+                    res.account_name,
+                    res.success,
+                    res.error,
+                    res.threads_post_url,
+                )
+        except Exception as e:
+            print(f"❌ Threads 自動發布崩潰: {e}")
 
     print(f"\n✅ 自動發文工作完成 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 80 + "\n")
