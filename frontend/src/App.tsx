@@ -89,10 +89,12 @@ function App() {
     enabled: boolean
     publish_times: string[]
     platforms: { wordpress: boolean; facebook: boolean; instagram: boolean; threads: boolean }
+    account_ids: { wordpress: string[]; facebook: string[]; instagram: string[]; threads: string[] }
   }>({
     enabled: false,
     publish_times: ['09:00', '17:00'],
-    platforms: { wordpress: true, facebook: true, instagram: true, threads: true }
+    platforms: { wordpress: true, facebook: true, instagram: true, threads: true },
+    account_ids: { wordpress: [], facebook: [], instagram: [], threads: [] }
   })
   const [autoStatus, setAutoStatus] = useState<{
     date: string
@@ -261,7 +263,7 @@ function App() {
     if (!confirm('確定要立即執行一次自動發文嗎？')) return
     setAutoRunning(true)
     try {
-      await axios.post('/api/autopublish/run', { platforms: autoConfig.platforms })
+      await axios.post('/api/autopublish/run', { platforms: autoConfig.platforms, account_ids: autoConfig.account_ids })
       alert('✅ 手動發文已完成！')
       fetchAutoStatus()
     } catch (err: any) {
@@ -2428,12 +2430,50 @@ function App() {
                 <h3 style={{ marginTop: 0, marginBottom: '16px', fontSize: '16px', color: '#333' }}>📡 平台設定</h3>
                 {(['wordpress', 'facebook', 'instagram', 'threads'] as const).map(platform => {
                   const labels: Record<string, string> = { wordpress: '🌐 WordPress', facebook: '📘 Facebook', instagram: '📸 Instagram', threads: '🧵 Threads' }
+                  // 取得該平台的帳號清單
+                  const platformAccountsMap: Record<string, Array<{ id: string, name: string }>> = {
+                    wordpress: wordpressAccounts,
+                    facebook: facebookAccounts,
+                    instagram: instagramAccounts,
+                    threads: threadsAccounts,
+                  }
+                  const platformAccounts = platformAccountsMap[platform] || []
+                  const selectedIds = autoConfig.account_ids[platform] || []
+
+                  const toggleAccount = (accId: string) => {
+                    const current = autoConfig.account_ids[platform] || []
+                    const next = current.includes(accId) ? current.filter(x => x !== accId) : [...current, accId]
+                    setAutoConfig({ ...autoConfig, account_ids: { ...autoConfig.account_ids, [platform]: next } })
+                  }
+
                   return (
-                    <div key={platform} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #f0f0f0' }}>
-                      <span style={{ fontSize: '14px', fontWeight: 500 }}>{labels[platform]}</span>
-                      <input type="checkbox" checked={autoConfig.platforms[platform]}
-                        onChange={e => setAutoConfig({ ...autoConfig, platforms: { ...autoConfig.platforms, [platform]: e.target.checked } })}
-                        style={{ width: '18px', height: '18px', cursor: 'pointer' }} />
+                    <div key={platform} style={{ borderBottom: '1px solid #f0f0f0', paddingBottom: '8px', marginBottom: '4px' }}>
+                      {/* 平台主開關 */}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0' }}>
+                        <span style={{ fontSize: '14px', fontWeight: 600 }}>{labels[platform]}</span>
+                        <input type="checkbox" checked={autoConfig.platforms[platform]}
+                          onChange={e => setAutoConfig({ ...autoConfig, platforms: { ...autoConfig.platforms, [platform]: e.target.checked } })}
+                          style={{ width: '18px', height: '18px', cursor: 'pointer' }} />
+                      </div>
+                      {/* 帳號子選項（僅在平台啟用時顯示）*/}
+                      {autoConfig.platforms[platform] && platformAccounts.length > 0 && (
+                        <div style={{ paddingLeft: '16px', paddingBottom: '6px' }}>
+                          <div style={{ fontSize: '11px', color: '#888', marginBottom: '4px' }}>
+                            {selectedIds.length === 0 ? '（全部帳號）' : `已選 ${selectedIds.length}/${platformAccounts.length} 個帳號`}
+                          </div>
+                          {platformAccounts.map(acc => (
+                            <label key={acc.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: '#555', cursor: 'pointer', padding: '2px 0' }}>
+                              <input
+                                type="checkbox"
+                                checked={selectedIds.length === 0 || selectedIds.includes(acc.id)}
+                                onChange={() => toggleAccount(acc.id)}
+                                style={{ width: '14px', height: '14px', cursor: 'pointer' }}
+                              />
+                              {acc.name}
+                            </label>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )
                 })}

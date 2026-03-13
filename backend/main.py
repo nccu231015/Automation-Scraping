@@ -2428,6 +2428,13 @@ auto_publish_config = {
         "instagram": True,
         "threads": True,
     },
+    # 各平台要發哪些帳號（空陣列 = 全部帳號）
+    "account_ids": {
+        "wordpress": [],
+        "facebook": [],
+        "instagram": [],
+        "threads": [],
+    },
 }
 
 # APScheduler 實例
@@ -2642,12 +2649,24 @@ async def _auto_publish_job(override_config: dict = None):
         print("💡 目前無有效的發文項目，結束工作。")
         return
 
+    # 所有平台都需要圖片，過濾掉無有效圖片的文章
+    publish_items_with_image = [item for item in publish_items if item.selected_image]
+    items_without_image = len(publish_items) - len(publish_items_with_image)
+    if items_without_image > 0:
+        print(f"⚠️  {items_without_image} 篇新聞無有效圖片，已跳過不發布")
+    if not publish_items_with_image:
+        print("❌ 本次所有新聞均無有效圖片，結束工作。")
+        return
+
     # WordPress
     if config["platforms"].get("wordpress") and wordpress_configured:
         print("\n🚀 自動發佈 - 啟動 WordPress")
         try:
+            cfg_wp_ids = config.get("account_ids", {}).get("wordpress", [])
+            wp_ids = cfg_wp_ids if cfg_wp_ids else list(wordpress_accounts.keys())
             wp_req = WordPressPublishRequest(
-                account_ids=list(wordpress_accounts.keys()), items=publish_items
+                account_ids=wp_ids,
+                items=publish_items_with_image,
             )
             wp_res = await publish_to_wordpress(wp_req)
             for res in wp_res.get("results", []):
@@ -2669,8 +2688,11 @@ async def _auto_publish_job(override_config: dict = None):
     if config["platforms"].get("facebook") and facebook_configured:
         print("\n🚀 自動發佈 - 啟動 Facebook")
         try:
+            cfg_fb_ids = config.get("account_ids", {}).get("facebook", [])
+            fb_ids = cfg_fb_ids if cfg_fb_ids else list(facebook_accounts.keys())
             fb_req = FacebookPublishRequest(
-                account_ids=list(facebook_accounts.keys()), items=publish_items
+                account_ids=fb_ids,
+                items=publish_items_with_image,
             )
             fb_res = await publish_to_facebook(fb_req)
             for res in fb_res.get("results", []):
@@ -2692,8 +2714,11 @@ async def _auto_publish_job(override_config: dict = None):
     if config["platforms"].get("instagram") and instagram_configured:
         print("\n🚀 自動發佈 - 啟動 Instagram")
         try:
+            cfg_ig_ids = config.get("account_ids", {}).get("instagram", [])
+            ig_ids = cfg_ig_ids if cfg_ig_ids else list(instagram_accounts.keys())
             ig_req = InstagramPublishRequest(
-                account_ids=list(instagram_accounts.keys()), items=publish_items
+                account_ids=ig_ids,
+                items=publish_items_with_image,
             )
             ig_res = await publish_to_instagram(ig_req)
             for res in ig_res.get("results", []):
@@ -2715,8 +2740,11 @@ async def _auto_publish_job(override_config: dict = None):
     if config["platforms"].get("threads") and threads_configured:
         print("\n🚀 自動發佈 - 啟動 Threads")
         try:
+            cfg_th_ids = config.get("account_ids", {}).get("threads", [])
+            th_ids = cfg_th_ids if cfg_th_ids else list(threads_accounts.keys())
             th_req = ThreadsPublishRequest(
-                account_ids=list(threads_accounts.keys()), items=publish_items
+                account_ids=th_ids,
+                items=publish_items_with_image,
             )
             th_res = await publish_to_threads(th_req)
             for res in th_res.get("results", []):
@@ -2802,11 +2830,14 @@ async def run_autopublish_now(request: Request):
         "enabled": True,  # 手動觸發永遠執行
         "publish_times": auto_publish_config.get("publish_times", []),
         "platforms": auto_publish_config["platforms"].copy(),
+        "account_ids": auto_publish_config.get("account_ids", {}).copy(),
     }
 
-    # 如果前端有傳來 platforms，則套用前端的選擇
+    # 如果前端有傳來 platforms 或 account_ids，則套用前端的選擇
     if "platforms" in body:
         run_config["platforms"] = body["platforms"]
+    if "account_ids" in body:
+        run_config["account_ids"] = body["account_ids"]
 
     try:
         await _auto_publish_job(run_config)

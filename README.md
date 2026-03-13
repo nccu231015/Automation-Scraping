@@ -13,6 +13,11 @@ A full-stack news management and AI rewriting system that allows you to process 
   - **Category Display**: View Chinese and English category tags
   - **Advanced Search**: Filter news by category and search across titles and categories
 - **🖼️ Image Selection**: Select specific images for each news item before publishing
+- **🤖 Auto-Publish Scheduler**: Schedule automatic publishing at configured times
+  - **Per-Platform Toggle**: Enable/disable each platform independently
+  - **Per-Account Selection**: Choose specific accounts per platform (empty = all accounts)
+  - **Image Filtering**: Articles without valid images are automatically skipped
+  - **Status Dashboard**: Monitor today's auto-publish results by platform and account
 - **📤 Multi-Platform Publishing**: 
   - **WordPress**: Multi-account support, direct publishing (live), and automatic category display
   - **PIXNET**: Publish to PIXNET blog platform
@@ -25,6 +30,7 @@ A full-stack news management and AI rewriting system that allows you to process 
 - **Filtering**: Filter by website source and title keywords across all tabs
 - **Image Upload**: Automatically upload featured images to WordPress media library
 - **🔄 Auto Token Refresh**: Threads & Instagram tokens automatically refresh before expiration
+
 
 ## 📦 Tech Stack
 
