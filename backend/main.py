@@ -2513,15 +2513,77 @@ async def _auto_publish_job(override_config: dict = None):
             print("❌ 無可用新聞")
             return
 
-        # 依 source_website 分組隨機取
+        # 依 source_website 分組，打亂後逐篇試，找到第一篇有有效圖片的才停
         by_source = {}
         for item in news_resp.data:
             src = item.get("sourceWebsite") or "unknown"
             by_source.setdefault(src, []).append(item)
 
-        selected_news = []
+        selected_news = []  # list of (news_item, image_url)
+
+        def _extract_image(news_item):
+            """嘗試從新聞中提取有效圖片 URL，無效回傳 None。"""
+            images = news_item.get("images")
+            if not images:
+                return None
+            try:
+                imgs = json.loads(images) if isinstance(images, str) else images
+
+                def get_img_url(img_obj):
+                    if isinstance(img_obj, dict):
+                        return img_obj.get("url") or img_obj.get("src")
+                    return str(img_obj)
+
+                valid_ex = (".jpg", ".jpeg", ".png", ".webp", ".heif")
+
+                if isinstance(imgs, list) and len(imgs) > 0:
+                    # Pass 1: 標準副檔名且不含地雷
+                    for img in imgs:
+                        url = get_img_url(img)
+                        if not url:
+                            continue
+                        lb_url = url.lower()
+                        if any(k in lb_url for k in (".svg", ".gif", "logo", "icon")):
+                            continue
+                        base_url = lb_url.split("?")[0]
+                        if any(base_url.endswith(ext) for ext in valid_ex):
+                            return "https:" + url if url.startswith("//") else url
+                    # Pass 2: 放寬，只排除地雷
+                    for img in imgs:
+                        url = get_img_url(img)
+                        if url:
+                            lb_url = url.lower()
+                            if not any(k in lb_url for k in (".svg", "logo", "icon")):
+                                return "https:" + url if url.startswith("//") else url
+                elif isinstance(imgs, dict):
+                    url = imgs.get("url") or imgs.get("src")
+                    if url and ".svg" not in url.lower():
+                        return "https:" + url if url.startswith("//") else url
+                elif isinstance(imgs, str):
+                    if ".svg" not in imgs.lower():
+                        return "https:" + imgs if imgs.startswith("//") else imgs
+            except Exception:
+                pass
+            return None
+
         for src, items in by_source.items():
-            selected_news.append(random.choice(items))
+            random.shuffle(items)
+            found = False
+            for candidate in items:
+                img_url = _extract_image(candidate)
+                if img_url:
+                    selected_news.append((candidate, img_url))
+                    print(f"✅ [{src}] 選定 ID {candidate['id']}（有有效圖片）")
+                    found = True
+                    break
+                else:
+                    print(f"⏭  [{src}] ID {candidate['id']} 無有效圖片，嘗試下一篇...")
+            if not found:
+                print(f"⚠️  [{src}] 所有候選新聞均無有效圖片，本來源跳過")
+
+        if not selected_news:
+            print("❌ 所有來源均無有有效圖片的新聞，結束工作。")
+            return
 
         print(f"✅ 共 {len(selected_news)} 篇新聞將發布 (來自 {len(by_source)} 個來源)")
     except Exception as e:
@@ -2535,12 +2597,11 @@ async def _auto_publish_job(override_config: dict = None):
     publish_items = []
     news_metadata = {}
 
-    for news_item in selected_news:
+    for news_item, image_url in selected_news:
         news_id = news_item["id"]
         title = news_item.get("title_translated", "")
         content = news_item.get("content_translated", "")
         source_website = news_item.get("sourceWebsite", "unknown")
-        images = news_item.get("images")
 
         print(f"\n── 處理新聞 ID: {news_id} | 來源: {source_website} ──")
 
@@ -2577,69 +2638,6 @@ async def _auto_publish_job(override_config: dict = None):
             print(f"✅ AI 重寫完成: {title_mod[:40]}...")
         except Exception as e:
             print(f"❌ AI 重寫失敗: {e}")
-        # 取得圖片 (強制過濾 SVG, GIF, icon 等無效格式，如果找不到好的就寧可不要圖)
-        image_url = None
-        if images:
-            try:
-                imgs = json.loads(images) if isinstance(images, str) else images
-
-                def get_img_url(img_obj):
-                    if isinstance(img_obj, dict):
-                        return img_obj.get("url") or img_obj.get("src")
-                    return str(img_obj)
-
-                if isinstance(imgs, list) and len(imgs) > 0:
-                    valid_ex = (".jpg", ".jpeg", ".png", ".webp", ".heif")
-
-                    # Pass 1: 尋找完美符合標準副檔名且不含地雷的圖片
-                    for img in imgs:
-                        url = get_img_url(img)
-                        if not url:
-                            continue
-                        lb_url = url.lower()
-                        if (
-                            ".svg" in lb_url
-                            or ".gif" in lb_url
-                            or "logo" in lb_url
-                            or "icon" in lb_url
-                        ):
-                            continue
-
-                        base_url = lb_url.split("?")[0]
-                        if any(base_url.endswith(ext) for ext in valid_ex):
-                            image_url = url
-                            break
-
-                    # Pass 2: 如果沒有以 jpg/png 結尾的標準圖片，放寬標準，只要不是地雷即可
-                    if not image_url:
-                        for img in imgs:
-                            url = get_img_url(img)
-                            if url:
-                                lb_url = url.lower()
-                                if (
-                                    ".svg" not in lb_url
-                                    and "logo" not in lb_url
-                                    and "icon" not in lb_url
-                                ):
-                                    image_url = url
-                                    break
-
-                    # 注意：我們「不」設定 imgs[0] 當作最後防線。
-                    # 因為如果是 SVG 等無效格式，送去 Meta 也只會報錯，寧可 image_url = None。
-
-                elif isinstance(imgs, dict):
-                    url = imgs.get("url") or imgs.get("src")
-                    if url and ".svg" not in url.lower():
-                        image_url = url
-                elif isinstance(imgs, str):
-                    if ".svg" not in imgs.lower():
-                        image_url = imgs
-
-                # 自動修正協定
-                if image_url and image_url.startswith("//"):
-                    image_url = "https:" + image_url
-            except Exception:
-                pass
 
         publish_items.append(PublishItem(news_id=news_id, selected_image=image_url))
         news_metadata[news_id] = {"title": title_mod, "source": source_website}
@@ -2649,14 +2647,8 @@ async def _auto_publish_job(override_config: dict = None):
         print("💡 目前無有效的發文項目，結束工作。")
         return
 
-    # 所有平台都需要圖片，過濾掉無有效圖片的文章
-    publish_items_with_image = [item for item in publish_items if item.selected_image]
-    items_without_image = len(publish_items) - len(publish_items_with_image)
-    if items_without_image > 0:
-        print(f"⚠️  {items_without_image} 篇新聞無有效圖片，已跳過不發布")
-    if not publish_items_with_image:
-        print("❌ 本次所有新聞均無有效圖片，結束工作。")
-        return
+    # 所有項目已在選定時確認有圖片，直接使用
+    publish_items_with_image = publish_items
 
     # WordPress
     if config["platforms"].get("wordpress") and wordpress_configured:
