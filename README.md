@@ -14,6 +14,7 @@ A full-stack news management and AI rewriting system that allows you to process 
   - **Advanced Search**: Filter news by category and search across titles and categories
 - **🖼️ Image Selection**: Select specific images for each news item before publishing
 - **🤖 Auto-Publish Scheduler**: Schedule automatic publishing at configured times
+  - **Immediate Publish**: Trigger a complete auto-publish workflow instantly without waiting for the schedule
   - **Per-Platform Toggle**: Enable/disable each platform independently
   - **Per-Account Selection**: Choose specific accounts per platform (empty = all accounts)
   - **Image Filtering**: Articles without valid images are automatically skipped

@@ -2479,8 +2479,8 @@ function App() {
                 })}
               </div>
               <div style={{ background: '#fff', borderRadius: '12px', padding: '24px', border: '1px solid #eee', boxShadow: '0 2px 8px rgba(0,0,0,0.05)', textAlign: 'center' }}>
-                <h3 style={{ marginTop: 0, marginBottom: '8px', fontSize: '16px' }}>⚡ 立即測試</h3>
-                <p style={{ fontSize: '12px', color: '#888', marginBottom: '16px' }}>立即執行一次完整的自動發文流程（不受排程限制）</p>
+                <h3 style={{ marginTop: 0, marginBottom: '8px', fontSize: '16px' }}>⚡ 立即發文</h3>
+                <p style={{ fontSize: '12px', color: '#888', marginBottom: '16px' }}>立即執行一次完整的發文流程（不受排程限制）</p>
                 <button onClick={handleRunNow} disabled={autoRunning}
                   style={{ width: '100%', padding: '12px', background: autoRunning ? '#ccc' : 'linear-gradient(135deg, #f093fb, #f5576c)', color: 'white', border: 'none', borderRadius: '8px', cursor: autoRunning ? 'wait' : 'pointer', fontWeight: 700, fontSize: '15px' }}>
                   {autoRunning ? '⏳ 發文中...' : '🚀 立即執行一次發文'}
